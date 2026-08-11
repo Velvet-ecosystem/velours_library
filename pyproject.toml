@@ -1,27 +1,21 @@
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
-
 [project]
 name = "velours-library"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first, provenance-aware offline knowledge library for the Velvet ecosystem"
 requires-python = ">=3.8"
 dependencies = []
-
 [project.optional-dependencies]
 pdf = ["pypdf>=4,<6"]
 dev = ["pytest>=7,<9"]
-
 [project.scripts]
 velour = "velours_library.cli:main"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
-
 [tool.setuptools.packages.find]
 where = ["src"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

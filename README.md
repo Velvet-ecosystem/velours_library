@@ -20,11 +20,20 @@ The library is designed for documents, manuals, datasets, research, reference ma
 ## Phase 1 commands
 
 ```bash
-velour --root ./library-data add ./incoming/manual.md \
+# Explicit quarantine path for newly acquired material
+velour --root ./library-data stage ./incoming/manual.md \
   --title "Workshop Manual" \
   --source "manufacturer" \
   --trust primary \
   --tag automotive
+velour --root ./library-data candidates --state staged
+velour --root ./library-data publish <candidate-id>
+
+# Convenience path for trusted/local material. It still stages and validates first.
+velour --root ./library-data add ./incoming/owner-notes.md \
+  --title "Owner Notes" \
+  --source "Mister" \
+  --trust owner
 
 velour --root ./library-data search "pulley alignment"
 velour --root ./library-data inspect <item-or-sha-prefix>
@@ -32,7 +41,7 @@ velour --root ./library-data verify <item-or-sha-prefix>
 velour --root ./library-data remove <item-or-sha-prefix>
 ```
 
-The first implementation uses a SQLite catalog, SHA-256 content-addressed archive objects, inert text extraction, optional PDF extraction, offline full-text search, provenance-aware results, and local lifecycle evidence records.
+The first implementation uses a SQLite catalog, SHA-256 content-addressed archive objects, an explicit quarantine/publish path, configurable ingestion and extraction limits, inert text extraction, optional PDF extraction, offline full-text search, provenance-aware results, and local lifecycle evidence records.
 
 ## Planned library layers
 
@@ -54,3 +63,17 @@ Large datasets and copyrighted source material should generally not be committed
 Velour is the librarian, not the oracle. She preserves evidence, records provenance, ranks source quality, retrieves relevant material, and tells Velvet what she found. Final reasoning remains separate from storage and retrieval.
 
 > Keep the books. Keep the receipts. Keep the difference between evidence and truth.
+
+## Quarantine workflow
+
+New sources may be staged before they become searchable:
+
+```bash
+velour --root ./library-data stage ./incoming/manual.pdf --title "Workshop Manual" --source manufacturer --trust primary
+velour --root ./library-data candidates --state staged
+velour --root ./library-data publish <candidate-id>
+# or
+velour --root ./library-data reject <candidate-id> --reason "source could not be verified"
+```
+
+`add` remains available as a convenience path, but it internally uses the same stage-and-publish pipeline. Staged material is never returned by normal library search.

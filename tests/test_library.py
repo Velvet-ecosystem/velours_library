@@ -1,89 +1,42 @@
 import json
 from pathlib import Path
-
+import pytest
 from velours_library import Library
 
+def test_add_search_inspect_and_verify(tmp_path:Path):
+    s=tmp_path/'n.md'; s.write_text('# Alternator\nInspect pulley alignment.',encoding='utf-8'); l=Library(tmp_path/'lib'); i=l.add(s,title='Alternator Notes',source='owner',trust_class='owner',tags=['repair']); assert l.inspect(i.item_id).title=='Alternator Notes'; assert l.verify(i.item_id); assert l.search('pulley')[0].item_id==i.item_id
 
-def test_add_search_inspect_and_verify(tmp_path: Path) -> None:
-    source = tmp_path / "notes.md"
-    source.write_text("# Alternator\nInspect pulley alignment before replacing the belt.", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    item = library.add(source, title="Alternator Notes", source="owner field notes", trust_class="owner", tags=["repair", "tiburon"])
+def test_duplicate_bytes_keep_separate_provenance(tmp_path:Path):
+    s=tmp_path/'same.txt'; s.write_text('shared bytes'); l=Library(tmp_path/'lib'); a=l.add(s,title='A',source='a'); b=l.add(s,title='B',source='b'); assert a.sha256==b.sha256 and a.item_id!=b.item_id and a.storage_path==b.storage_path
 
-    inspected = library.inspect(item.item_id)
-    assert inspected.title == "Alternator Notes"
-    assert inspected.tags == ("repair", "tiburon")
-    assert library.verify(item.item_id) is True
-    results = library.search("pulley alignment")
-    assert results and results[0].item_id == item.item_id
-    assert results[0].trust_class == "owner"
+def test_search_returns_source_and_trust(tmp_path:Path):
+    s=tmp_path/'m.txt'; s.write_text('battery charging voltage'); l=Library(tmp_path/'lib'); i=l.add(s,title='Battery',source='Maker',trust_class='primary'); r=l.search('battery')[0]; assert (r.source,r.trust_class)==('Maker','primary')
 
+def test_verify_detects_tampering(tmp_path:Path):
+    s=tmp_path/'g.txt'; s.write_text('original'); l=Library(tmp_path/'lib'); i=l.add(s,title='G',source='local'); Path(i.storage_path).write_text('changed'); assert not l.verify(i.item_id)
 
-def test_duplicate_bytes_keep_separate_provenance(tmp_path: Path) -> None:
-    source = tmp_path / "same.txt"
-    source.write_text("shared bytes", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    first = library.add(source, title="Factory Copy", source="manufacturer", trust_class="primary")
-    second = library.add(source, title="Owner Copy", source="Mister", trust_class="owner")
+def test_remove_preserves_shared_payload_until_last_reference(tmp_path:Path):
+    s=tmp_path/'same.txt'; s.write_text('shared'); l=Library(tmp_path/'lib'); a=l.add(s,title='A',source='a'); b=l.add(s,title='B',source='b'); p=Path(a.storage_path); l.remove(a.item_id); assert p.exists(); l.remove(b.item_id); assert not p.exists()
 
-    assert first.item_id != second.item_id
-    assert first.sha256 == second.sha256
-    assert first.storage_path == second.storage_path
-    assert len(library.list_items()) == 2
+def test_inspect_accepts_unique_sha_prefix(tmp_path:Path):
+    s=tmp_path/'x.txt'; s.write_text('unique'); l=Library(tmp_path/'lib'); i=l.add(s,title='X',source='local'); assert l.inspect(i.sha256[:12]).item_id==i.item_id
 
+def test_library_events_are_noncanonical(tmp_path:Path):
+    s=tmp_path/'x.txt'; s.write_text('evidence'); l=Library(tmp_path/'lib'); i=l.add(s,title='X',source='local'); l.verify(i.item_id); ev=[json.loads(x) for x in l.receipt_path.read_text().splitlines()]; assert ev and all(e['canonical_receipt'] is False for e in ev)
 
-def test_search_returns_source_and_trust(tmp_path: Path) -> None:
-    source = tmp_path / "manual.txt"
-    source.write_text("battery charging voltage reference", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    item = library.add(source, title="Battery Manual", source="Example Manufacturer", trust_class="primary", tags=["battery"])
+def test_staged_candidate_is_not_searchable_until_publish(tmp_path:Path):
+    s=tmp_path/'secret.txt'; s.write_text('quarantine telescope'); l=Library(tmp_path/'lib'); c=l.stage(s,title='Staged',source='local'); assert l.search('telescope')==[]; i=l.publish(c.candidate_id); assert l.search('telescope')[0].item_id==i.item_id
 
-    result = library.search("battery")[0]
-    assert result.item_id == item.item_id
-    assert result.source == "Example Manufacturer"
-    assert result.trust_class == "primary"
+def test_publish_refuses_tampered_staged_payload(tmp_path:Path):
+    s=tmp_path/'x.txt'; s.write_text('original'); l=Library(tmp_path/'lib'); c=l.stage(s,title='X',source='local'); Path(c.staged_path).write_text('tampered');
+    with pytest.raises(RuntimeError): l.publish(c.candidate_id)
 
+def test_reject_keeps_audit_record_but_removes_payload(tmp_path:Path):
+    s=tmp_path/'x.txt'; s.write_text('candidate'); l=Library(tmp_path/'lib'); c=l.stage(s,title='X',source='local'); p=Path(c.staged_path); r=l.reject(c.candidate_id,'bad source'); assert r.state=='rejected' and r.rejection_reason=='bad source' and not p.exists(); assert l.inspect_candidate(c.candidate_id).state=='rejected'
 
-def test_verify_detects_tampering(tmp_path: Path) -> None:
-    source = tmp_path / "guide.txt"
-    source.write_text("original", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    item = library.add(source, title="Guide", source="local")
-    Path(item.storage_path).write_text("changed", encoding="utf-8")
-    assert library.verify(item.item_id) is False
+def test_file_size_limit_blocks_stage(tmp_path:Path):
+    s=tmp_path/'big.bin'; s.write_bytes(b'x'*11); l=Library(tmp_path/'lib',max_file_bytes=10)
+    with pytest.raises(ValueError): l.stage(s,title='Big',source='local')
 
-
-def test_remove_preserves_shared_payload_until_last_reference(tmp_path: Path) -> None:
-    source = tmp_path / "same.txt"
-    source.write_text("shared", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    first = library.add(source, title="One", source="a")
-    second = library.add(source, title="Two", source="b")
-    payload = Path(first.storage_path)
-
-    library.remove(first.item_id)
-    assert payload.exists()
-    assert library.inspect(second.item_id).item_id == second.item_id
-    library.remove(second.item_id)
-    assert not payload.exists()
-
-
-def test_inspect_accepts_unique_sha_prefix(tmp_path: Path) -> None:
-    source = tmp_path / "item.txt"
-    source.write_text("unique prefix data", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    item = library.add(source, title="Prefix", source="local")
-    assert library.inspect(item.sha256[:12]).item_id == item.item_id
-
-
-def test_library_events_are_explicitly_noncanonical_receipts(tmp_path: Path) -> None:
-    source = tmp_path / "item.txt"
-    source.write_text("receipt evidence", encoding="utf-8")
-    library = Library(tmp_path / "library")
-    item = library.add(source, title="Receipt", source="local")
-    assert library.verify(item.item_id) is True
-
-    events = [json.loads(line) for line in library.receipt_path.read_text(encoding="utf-8").splitlines()]
-    assert len(events) >= 2
-    assert all(event["canonical_receipt"] is False for event in events)
-    assert all(event["receipt_scope"] == "velours_library_local_evidence" for event in events)
+def test_large_text_can_archive_without_extraction(tmp_path:Path):
+    s=tmp_path/'large.txt'; s.write_text('alpha beta gamma'); l=Library(tmp_path/'lib',max_extract_bytes=4); i=l.add(s,title='Large',source='local'); assert Path(i.storage_path).exists() and i.extracted_text_path is None

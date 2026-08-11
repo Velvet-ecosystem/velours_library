@@ -1,6 +1,4 @@
 """Velour's shared local-first knowledge library."""
-
-from .catalog import Library, LibraryItem, SearchResult
-
-__all__ = ["Library", "LibraryItem", "SearchResult"]
-__version__ = "0.1.0"
+from .catalog import Candidate, Library, LibraryItem, SearchResult
+__all__ = ["Candidate", "Library", "LibraryItem", "SearchResult"]
+__version__ = "0.2.0"
