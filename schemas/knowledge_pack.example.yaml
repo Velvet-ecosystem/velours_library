@@ -1,0 +1,16 @@
+schema_version: 0.1
+pack_id: electronics-sensors-core
+name: Electronics Sensors Core
+version: 0.1.0
+domain: electronics/sensors
+state: candidate
+created_at: 2026-08-11T00:00:00Z
+items:
+  - item_id: example-bosch-datasheet-001
+integrity:
+  manifest_sha256: REPLACE_WITH_REAL_HASH
+requirements:
+  library_schema: ">=0.1"
+rights:
+  redistribution: mixed
+  note: Individual source rights remain authoritative.

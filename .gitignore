@@ -1,0 +1,33 @@
+# Bulk library material
+archive/**/*
+!archive/.gitkeep
+incoming/**/*
+!incoming/.gitkeep
+indexes/**/*
+!indexes/.gitkeep
+receipts/**/*
+!receipts/.gitkeep
+
+# Local databases / indexes
+*.sqlite
+*.sqlite3
+*.db
+*.faiss
+*.index
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets
+.env
+*.key
+*.pem

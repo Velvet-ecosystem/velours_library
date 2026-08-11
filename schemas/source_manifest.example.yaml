@@ -1,0 +1,32 @@
+schema_version: 0.1
+item_id: example-bosch-datasheet-001
+title: Example Sensor Datasheet
+source:
+  publisher: Example Manufacturer
+  author: null
+  uri: https://example.invalid/document.pdf
+acquisition:
+  method: download
+  acquired_at: 2026-08-11T00:00:00Z
+content:
+  media_type: application/pdf
+  language: en
+  sha256: REPLACE_WITH_REAL_HASH
+rights:
+  license: unknown
+  note: Example only
+trust:
+  class: primary
+storage:
+  canonical_identity: archive/example-bosch-datasheet-001/document.pdf
+relationships:
+  derived_from: null
+  derivatives: []
+processing:
+  state: archived
+  transformations: []
+indexing:
+  full_text: pending
+  semantic: pending
+packs:
+  - electronics/sensors
