@@ -1,79 +1,61 @@
 # Velour's Library
 
-Velour's Library is Velvet's local-first, provenance-aware knowledge archive: a governed place to ingest, index, preserve, verify, and retrieve trusted offline knowledge.
-
-The library is the canonical shared knowledge-library layer for the Velvet ecosystem. Cyberdeck, vehicle, home, forge, Founder, and future bodies may consume it without inheriting one another's hardware, UI, or deployment assumptions.
-
-The library is designed for documents, manuals, datasets, research, reference material, maps, selected web captures, source repositories, and owner-provided material. It separates raw evidence from searchable indexes and curated knowledge packs so Velvet can retrieve useful context without treating every stored source as equally trustworthy.
+Velour's Library is Velvet's canonical shared, local-first, provenance-aware knowledge archive. It preserves source evidence, keeps acquisition and transformation history, and returns retrieval results with enough provenance for another Velvet component to reason about them without treating retrieval as belief.
 
 ## Core principles
 
-- **Local first** — the library remains useful without an Internet connection.
-- **Provenance before confidence** — every item should retain where it came from, when it was acquired, and what transformed it.
-- **Preserve the source** — normalized or indexed derivatives should not replace the original evidence.
-- **Trust is graded** — a primary manufacturer datasheet is not equivalent to an anonymous forum post.
-- **Retrieval is not belief** — finding a source does not make its claims true.
-- **Receipts matter** — ingestion, transformation, indexing, update, and removal should be auditable.
-- **Knowledge is modular** — collections can be installed, updated, verified, removed, and transported as governed knowledge packs.
-- **Models are optional** — the archive and retrieval system must remain useful independently of any particular generative model.
+- Local first.
+- Provenance before confidence.
+- Preserve the source.
+- Trust is graded.
+- Retrieval is not belief.
+- Receipts matter.
+- Knowledge is modular.
+- Models are optional.
+- Currency is metadata, not truth.
 
-## Phase 1 commands
+## Guarded ingestion
 
 ```bash
-# Explicit quarantine path for newly acquired material
 velour --root ./library-data stage ./incoming/manual.md \
-  --title "Workshop Manual" \
-  --source "manufacturer" \
-  --trust primary \
-  --tag automotive
+  --title "Workshop Manual" --source manufacturer --trust primary \
+  --version 1.4 --stale-after 2027-01-01
 velour --root ./library-data candidates --state staged
 velour --root ./library-data publish <candidate-id>
-
-# Convenience path for trusted/local material. It still stages and validates first.
-velour --root ./library-data add ./incoming/owner-notes.md \
-  --title "Owner Notes" \
-  --source "Mister" \
-  --trust owner
-
-velour --root ./library-data search "pulley alignment"
-velour --root ./library-data inspect <item-or-sha-prefix>
-velour --root ./library-data verify <item-or-sha-prefix>
-velour --root ./library-data remove <item-or-sha-prefix>
 ```
 
-The first implementation uses a SQLite catalog, SHA-256 content-addressed archive objects, an explicit quarantine/publish path, configurable ingestion and extraction limits, inert text extraction, optional PDF extraction, offline full-text search, provenance-aware results, and local lifecycle evidence records.
+`add` is a convenience path for trusted/local material, but it still stages and validates before publication. Staged material never appears in normal retrieval.
 
-## Planned library layers
-
-```text
-incoming/      material awaiting validation and ingestion
-archive/       canonical preserved source material
-catalog/       metadata, manifests, provenance, licensing, checksums
-indexes/       full-text, semantic, entity and relationship indexes
-packs/         curated portable knowledge collections
-receipts/      ingestion and lifecycle evidence
-tools/         import, validation, indexing and maintenance utilities
-docs/          architecture, doctrine and schemas
-```
-
-Large datasets and copyrighted source material should generally not be committed directly to Git. This repository defines the library system, schemas, manifests, tooling, and governed structure that manage those materials on Velvet's storage.
-
-## Velour's role
-
-Velour is the librarian, not the oracle. She preserves evidence, records provenance, ranks source quality, retrieves relevant material, and tells Velvet what she found. Final reasoning remains separate from storage and retrieval.
-
-> Keep the books. Keep the receipts. Keep the difference between evidence and truth.
-
-## Quarantine workflow
-
-New sources may be staged before they become searchable:
+## Retrieval evidence
 
 ```bash
-velour --root ./library-data stage ./incoming/manual.pdf --title "Workshop Manual" --source manufacturer --trust primary
-velour --root ./library-data candidates --state staged
-velour --root ./library-data publish <candidate-id>
-# or
-velour --root ./library-data reject <candidate-id> --reason "source could not be verified"
+velour --root ./library-data search "pulley alignment"
+velour --root ./library-data evidence "pulley alignment"
+velour --root ./library-data reindex
 ```
 
-`add` remains available as a convenience path, but it internally uses the same stage-and-publish pipeline. Staged material is never returned by normal library search.
+Search results carry source identity, trust class, canonical hash, deterministic chunk identity, retrieval method, and location. Text uses line ranges. PDFs preserve page locations when PDF extraction is available. Evidence bundles are reference-only and do not create canonical Velvet receipts.
+
+## Source lifecycle
+
+```bash
+velour --root ./library-data add ./manual-1.4.md \
+  --title "Workshop Manual" --source manufacturer --trust primary \
+  --version 1.4 --supersedes <old-item-id>
+velour --root ./library-data lifecycle <item-id>
+velour --root ./library-data stale <item-id>
+velour --root ./library-data refresh <item-id> --stale-after 2027-08-01
+velour --root ./library-data stale-list
+```
+
+Velour preserves superseded revisions instead of deleting history. Retrieval carries lifecycle state, replacement links, freshness deadlines, and explicit warnings. Relevance scoring is not silently altered by recency or version state.
+
+Velour is the librarian, not the oracle. She keeps the evidence, where it came from, what happened to it, which revision replaced it, and where a retrieved passage lives. Velvet remains responsible for reasoning with what comes off the shelves.
+
+## Portable knowledge packs
+
+Knowledge packs freeze a curated set of library items into a deterministic manifest that snapshots provenance, trust, version, lifecycle state, and canonical payload hashes. Pack identity is derived from canonical JSON rather than a random identifier.
+
+Exports use content-addressed `objects/sha256/` storage, deduplicate identical payloads, verify every object before publication, and can be checked again on an isolated machine without the source library. Lifecycle changes after pack creation appear as drift warnings; they do not silently rewrite historical manifests.
+
+Checksums establish integrity, not authorship. Cryptographic signing remains a separate future trust-layer decision.

@@ -1,42 +1,189 @@
 import json
 from pathlib import Path
+
 import pytest
+
 from velours_library import Library
 
-def test_add_search_inspect_and_verify(tmp_path:Path):
-    s=tmp_path/'n.md'; s.write_text('# Alternator\nInspect pulley alignment.',encoding='utf-8'); l=Library(tmp_path/'lib'); i=l.add(s,title='Alternator Notes',source='owner',trust_class='owner',tags=['repair']); assert l.inspect(i.item_id).title=='Alternator Notes'; assert l.verify(i.item_id); assert l.search('pulley')[0].item_id==i.item_id
 
-def test_duplicate_bytes_keep_separate_provenance(tmp_path:Path):
-    s=tmp_path/'same.txt'; s.write_text('shared bytes'); l=Library(tmp_path/'lib'); a=l.add(s,title='A',source='a'); b=l.add(s,title='B',source='b'); assert a.sha256==b.sha256 and a.item_id!=b.item_id and a.storage_path==b.storage_path
+def test_add_search_inspect_and_verify(tmp_path: Path):
+    source = tmp_path / "n.md"; source.write_text("# Alternator\nInspect pulley alignment.", encoding="utf-8")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Alternator Notes", source="owner", trust_class="owner", tags=["repair"])
+    assert library.inspect(item.item_id).title == "Alternator Notes"; assert library.verify(item.item_id); assert library.search("pulley")[0].item_id == item.item_id
 
-def test_search_returns_source_and_trust(tmp_path:Path):
-    s=tmp_path/'m.txt'; s.write_text('battery charging voltage'); l=Library(tmp_path/'lib'); i=l.add(s,title='Battery',source='Maker',trust_class='primary'); r=l.search('battery')[0]; assert (r.source,r.trust_class)==('Maker','primary')
 
-def test_verify_detects_tampering(tmp_path:Path):
-    s=tmp_path/'g.txt'; s.write_text('original'); l=Library(tmp_path/'lib'); i=l.add(s,title='G',source='local'); Path(i.storage_path).write_text('changed'); assert not l.verify(i.item_id)
+def test_duplicate_bytes_keep_separate_provenance(tmp_path: Path):
+    source = tmp_path / "same.txt"; source.write_text("shared bytes")
+    library = Library(tmp_path / "lib"); first = library.add(source, title="A", source="a"); second = library.add(source, title="B", source="b")
+    assert first.sha256 == second.sha256 and first.item_id != second.item_id and first.storage_path == second.storage_path
 
-def test_remove_preserves_shared_payload_until_last_reference(tmp_path:Path):
-    s=tmp_path/'same.txt'; s.write_text('shared'); l=Library(tmp_path/'lib'); a=l.add(s,title='A',source='a'); b=l.add(s,title='B',source='b'); p=Path(a.storage_path); l.remove(a.item_id); assert p.exists(); l.remove(b.item_id); assert not p.exists()
 
-def test_inspect_accepts_unique_sha_prefix(tmp_path:Path):
-    s=tmp_path/'x.txt'; s.write_text('unique'); l=Library(tmp_path/'lib'); i=l.add(s,title='X',source='local'); assert l.inspect(i.sha256[:12]).item_id==i.item_id
+def test_search_returns_source_and_trust(tmp_path: Path):
+    source = tmp_path / "m.txt"; source.write_text("battery charging voltage")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Battery", source="Maker", trust_class="primary")
+    result = library.search("battery")[0]; assert result.item_id == item.item_id; assert (result.source, result.trust_class) == ("Maker", "primary")
 
-def test_library_events_are_noncanonical(tmp_path:Path):
-    s=tmp_path/'x.txt'; s.write_text('evidence'); l=Library(tmp_path/'lib'); i=l.add(s,title='X',source='local'); l.verify(i.item_id); ev=[json.loads(x) for x in l.receipt_path.read_text().splitlines()]; assert ev and all(e['canonical_receipt'] is False for e in ev)
 
-def test_staged_candidate_is_not_searchable_until_publish(tmp_path:Path):
-    s=tmp_path/'secret.txt'; s.write_text('quarantine telescope'); l=Library(tmp_path/'lib'); c=l.stage(s,title='Staged',source='local'); assert l.search('telescope')==[]; i=l.publish(c.candidate_id); assert l.search('telescope')[0].item_id==i.item_id
+def test_verify_detects_tampering(tmp_path: Path):
+    source = tmp_path / "g.txt"; source.write_text("original")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="G", source="local"); Path(item.storage_path).write_text("changed")
+    assert not library.verify(item.item_id)
 
-def test_publish_refuses_tampered_staged_payload(tmp_path:Path):
-    s=tmp_path/'x.txt'; s.write_text('original'); l=Library(tmp_path/'lib'); c=l.stage(s,title='X',source='local'); Path(c.staged_path).write_text('tampered');
-    with pytest.raises(RuntimeError): l.publish(c.candidate_id)
 
-def test_reject_keeps_audit_record_but_removes_payload(tmp_path:Path):
-    s=tmp_path/'x.txt'; s.write_text('candidate'); l=Library(tmp_path/'lib'); c=l.stage(s,title='X',source='local'); p=Path(c.staged_path); r=l.reject(c.candidate_id,'bad source'); assert r.state=='rejected' and r.rejection_reason=='bad source' and not p.exists(); assert l.inspect_candidate(c.candidate_id).state=='rejected'
+def test_remove_preserves_shared_payload_until_last_reference(tmp_path: Path):
+    source = tmp_path / "same.txt"; source.write_text("shared")
+    library = Library(tmp_path / "lib"); first = library.add(source, title="A", source="a"); second = library.add(source, title="B", source="b"); payload = Path(first.storage_path)
+    library.remove(first.item_id); assert payload.exists(); library.remove(second.item_id); assert not payload.exists()
 
-def test_file_size_limit_blocks_stage(tmp_path:Path):
-    s=tmp_path/'big.bin'; s.write_bytes(b'x'*11); l=Library(tmp_path/'lib',max_file_bytes=10)
-    with pytest.raises(ValueError): l.stage(s,title='Big',source='local')
 
-def test_large_text_can_archive_without_extraction(tmp_path:Path):
-    s=tmp_path/'large.txt'; s.write_text('alpha beta gamma'); l=Library(tmp_path/'lib',max_extract_bytes=4); i=l.add(s,title='Large',source='local'); assert Path(i.storage_path).exists() and i.extracted_text_path is None
+def test_inspect_accepts_unique_sha_prefix(tmp_path: Path):
+    source = tmp_path / "x.txt"; source.write_text("unique")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="X", source="local"); assert library.inspect(item.sha256[:12]).item_id == item.item_id
+
+
+def test_library_events_are_noncanonical(tmp_path: Path):
+    source = tmp_path / "x.txt"; source.write_text("evidence")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="X", source="local"); library.verify(item.item_id)
+    events = [json.loads(line) for line in library.receipt_path.read_text().splitlines()]; assert events and all(event["canonical_receipt"] is False for event in events)
+
+
+def test_staged_candidate_is_not_searchable_until_publish(tmp_path: Path):
+    source = tmp_path / "secret.txt"; source.write_text("quarantine telescope")
+    library = Library(tmp_path / "lib"); candidate = library.stage(source, title="Staged", source="local")
+    assert library.search("telescope") == []; item = library.publish(candidate.candidate_id); assert library.search("telescope")[0].item_id == item.item_id
+
+
+def test_publish_refuses_tampered_staged_payload(tmp_path: Path):
+    source = tmp_path / "x.txt"; source.write_text("original")
+    library = Library(tmp_path / "lib"); candidate = library.stage(source, title="X", source="local"); Path(candidate.staged_path).write_text("tampered")
+    with pytest.raises(RuntimeError): library.publish(candidate.candidate_id)
+
+
+def test_reject_keeps_audit_record_but_removes_payload(tmp_path: Path):
+    source = tmp_path / "x.txt"; source.write_text("candidate")
+    library = Library(tmp_path / "lib"); candidate = library.stage(source, title="X", source="local"); staged = Path(candidate.staged_path)
+    rejected = library.reject(candidate.candidate_id, "bad source"); assert rejected.state == "rejected" and rejected.rejection_reason == "bad source" and not staged.exists(); assert library.inspect_candidate(candidate.candidate_id).state == "rejected"
+
+
+def test_file_size_limit_blocks_stage(tmp_path: Path):
+    source = tmp_path / "big.bin"; source.write_bytes(b"x" * 11); library = Library(tmp_path / "lib", max_file_bytes=10)
+    with pytest.raises(ValueError): library.stage(source, title="Big", source="local")
+
+
+def test_large_text_can_archive_without_extraction(tmp_path: Path):
+    source = tmp_path / "large.txt"; source.write_text("alpha beta gamma"); library = Library(tmp_path / "lib", max_extract_bytes=4)
+    item = library.add(source, title="Large", source="local"); assert Path(item.storage_path).exists() and item.extracted_text_path is None
+
+
+def test_evidence_has_stable_chunk_and_line_location(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("one\ntwo\nneedle phrase\nfour\nfive\n", encoding="utf-8")
+    library = Library(tmp_path / "lib", chunk_lines=3); item = library.add(source, title="Manual", source="Maker", trust_class="primary")
+    result = library.evidence("needle phrase")[0]
+    assert result.item_id == item.item_id; assert result.chunk_id and result.location == {"kind": "lines", "start_line": 1, "end_line": 3}; assert result.sha256 == item.sha256
+
+
+def test_reindex_reproduces_chunk_identity(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("alpha\nbeta\ngamma\ndelta\n", encoding="utf-8")
+    library = Library(tmp_path / "lib", chunk_lines=2); item = library.add(source, title="Manual", source="Maker")
+    before = [(r.chunk_id, r.location) for r in library.evidence("alpha")]; assert library.reindex(item.item_id) == 2; after = [(r.chunk_id, r.location) for r in library.evidence("alpha")]
+    assert before == after
+
+
+def test_evidence_bundle_is_reference_only_and_noncanonical(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("torque reference", encoding="utf-8")
+    library = Library(tmp_path / "lib"); library.add(source, title="Torque", source="Maker", trust_class="primary")
+    bundle = library.evidence_bundle("torque")
+    assert bundle["reference_only"] is True and bundle["canonical_receipt"] is False; assert bundle["results"][0]["canonical_receipt"] is False
+
+
+def test_pdf_chunk_locations_are_pages(tmp_path: Path):
+    source = tmp_path / "fake.pdf"; source.write_bytes(b"%PDF-fake")
+    library = Library(tmp_path / "lib")
+    library._extract_pdf_pages = lambda path: ["page one needle", "page two"]  # type: ignore
+    item = library.add(source, title="PDF Manual", source="Maker", trust_class="primary")
+    result = library.evidence("needle")[0]
+    assert item.media_type == "application/pdf"; assert result.location == {"kind": "page", "page": 1}
+
+
+def test_metadata_only_item_is_still_retrievable(tmp_path: Path):
+    source = tmp_path / "radio.bin"; source.write_bytes(b"\x00\x01\x02")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Radio Datasheet Binary", source="Maker", trust_class="primary", tags=["radio"])
+    result = library.evidence("radio")[0]
+    assert result.item_id == item.item_id and result.chunk_id is None and result.retrieval_method == "metadata" and result.location == {"kind": "metadata"}
+
+
+def test_version_and_freshness_metadata_round_trip(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("versioned manual")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Manual", source="Maker", version_label="1.4", stale_after="2030-01-01")
+    inspected = library.inspect(item.item_id)
+    assert inspected.version_label == "1.4" and inspected.lifecycle_state == "active" and inspected.stale_after == "2030-01-01"
+
+
+def test_supersession_marks_old_and_returns_bidirectional_lineage(tmp_path: Path):
+    old_source = tmp_path / "old.txt"; old_source.write_text("needle old")
+    new_source = tmp_path / "new.txt"; new_source.write_text("needle new")
+    library = Library(tmp_path / "lib"); old = library.add(old_source, title="Manual", source="Maker", version_label="1.0")
+    new = library.add(new_source, title="Manual", source="Maker", version_label="1.1", supersedes_item_id=old.item_id)
+    old_now = library.inspect(old.item_id); new_now = library.inspect(new.item_id)
+    assert old_now.lifecycle_state == "superseded" and old_now.superseded_by_item_id == new.item_id
+    assert new_now.supersedes_item_id == old.item_id and new_now.lifecycle_state == "active"
+    old_result = next(result for result in library.evidence("needle", 10) if result.item_id == old.item_id)
+    assert "source_superseded" in old_result.warnings
+
+
+def test_expired_freshness_deadline_is_warning_not_score_mutation(tmp_path: Path):
+    old_source = tmp_path / "old.txt"; old_source.write_text("same needle")
+    fresh_source = tmp_path / "fresh.txt"; fresh_source.write_text("same needle")
+    library = Library(tmp_path / "lib"); old = library.add(old_source, title="A", source="Maker", stale_after="2000-01-01")
+    fresh = library.add(fresh_source, title="B", source="Maker", stale_after="2099-01-01")
+    results = {result.item_id: result for result in library.evidence("needle", 10)}
+    assert "freshness_deadline_passed" in results[old.item_id].warnings
+    assert "freshness_deadline_passed" not in results[fresh.item_id].warnings
+    assert results[old.item_id].score == results[fresh.item_id].score
+
+
+def test_invalid_stale_after_becomes_warning_not_exception(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("needle")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Manual", source="Maker", stale_after="eventually-ish")
+    result = library.evidence("needle")[0]
+    assert result.item_id == item.item_id and "invalid_stale_after" in result.warnings
+
+
+def test_superseded_item_cannot_be_downgraded_to_stale(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.mark_stale(old.item_id)
+    assert library.inspect(old.item_id).lifecycle_state == "superseded"
+
+
+def test_superseded_item_cannot_be_refreshed_active(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.refresh(old.item_id)
+    assert library.inspect(old.item_id).lifecycle_state == "superseded"
+
+
+def test_invalid_supersession_target_fails_before_staged_or_archive_bytes(tmp_path: Path):
+    source = tmp_path / "new.txt"; source.write_text("replacement")
+    library = Library(tmp_path / "lib")
+    with pytest.raises(KeyError): library.stage(source, title="New", source="Maker", supersedes_item_id="lib_missing")
+    assert list(library.incoming_dir.iterdir()) == []
+    assert list(library.archive_dir.rglob("*")) == []
+
+
+def test_supersession_is_linear_and_rejects_second_successor(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    c = tmp_path / "c.txt"; c.write_text("c")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.stage(c, title="C", source="Maker", supersedes_item_id=old.item_id)
+
+
+def test_linked_revisions_cannot_be_removed(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); new = library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.remove(old.item_id)
+    with pytest.raises(ValueError): library.remove(new.item_id)
