@@ -1,4 +1,4 @@
-"""Core archive, catalog, provenance, quarantine, and retrieval evidence for Velour's Library."""
+"""Core archive, catalog, provenance, quarantine, retrieval evidence, and source lifecycle."""
 from __future__ import annotations
 
 import hashlib
@@ -8,14 +8,15 @@ import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 _TEXT_EXTENSIONS = {".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml", ".toml", ".ini", ".log"}
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _TRUST_CLASSES = {"primary", "scholarly", "secondary", "community", "owner", "generated", "unknown"}
+_LIFECYCLE_STATES = {"active", "stale", "superseded"}
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,11 @@ class LibraryItem:
     published_at: Optional[str]
     rights_note: Optional[str]
     tags: Tuple[str, ...]
+    version_label: Optional[str] = None
+    lifecycle_state: str = "active"
+    stale_after: Optional[str] = None
+    supersedes_item_id: Optional[str] = None
+    superseded_by_item_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,9 @@ class Candidate:
     rights_note: Optional[str]
     tags: Tuple[str, ...]
     rejection_reason: Optional[str]
+    version_label: Optional[str] = None
+    stale_after: Optional[str] = None
+    supersedes_item_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +79,12 @@ class EvidenceResult:
     location: Dict[str, object]
     reference_only: bool = True
     canonical_receipt: bool = False
+    version_label: Optional[str] = None
+    lifecycle_state: str = "active"
+    stale_after: Optional[str] = None
+    supersedes_item_id: Optional[str] = None
+    superseded_by_item_id: Optional[str] = None
+    warnings: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -84,6 +99,12 @@ class SearchResult:
     chunk_id: Optional[str] = None
     retrieval_method: str = "metadata"
     location: Optional[Dict[str, object]] = None
+    version_label: Optional[str] = None
+    lifecycle_state: str = "active"
+    stale_after: Optional[str] = None
+    supersedes_item_id: Optional[str] = None
+    superseded_by_item_id: Optional[str] = None
+    warnings: Tuple[str, ...] = ()
 
 
 class Library:
@@ -124,9 +145,12 @@ class Library:
                     item_id TEXT PRIMARY KEY,title TEXT NOT NULL,source TEXT NOT NULL,source_uri TEXT,
                     trust_class TEXT NOT NULL,media_type TEXT NOT NULL,language TEXT NOT NULL,
                     sha256 TEXT NOT NULL,storage_path TEXT NOT NULL,extracted_text_path TEXT,
-                    imported_at TEXT NOT NULL,published_at TEXT,rights_note TEXT
+                    imported_at TEXT NOT NULL,published_at TEXT,rights_note TEXT,
+                    version_label TEXT,lifecycle_state TEXT NOT NULL DEFAULT 'active',stale_after TEXT,
+                    supersedes_item_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_items_sha256 ON items(sha256);
+                CREATE INDEX IF NOT EXISTS idx_items_supersedes ON items(supersedes_item_id);
                 CREATE TABLE IF NOT EXISTS tags(
                     item_id TEXT NOT NULL REFERENCES items(item_id) ON DELETE CASCADE,
                     tag TEXT NOT NULL,PRIMARY KEY(item_id,tag)
@@ -135,7 +159,8 @@ class Library:
                     candidate_id TEXT PRIMARY KEY,title TEXT NOT NULL,source TEXT NOT NULL,source_uri TEXT,
                     trust_class TEXT NOT NULL,language TEXT NOT NULL,sha256 TEXT NOT NULL,staged_path TEXT NOT NULL,
                     staged_at TEXT NOT NULL,state TEXT NOT NULL,published_at TEXT,rights_note TEXT,
-                    tags_json TEXT NOT NULL,rejection_reason TEXT
+                    tags_json TEXT NOT NULL,rejection_reason TEXT,version_label TEXT,stale_after TEXT,
+                    supersedes_item_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_candidates_sha256 ON candidates(sha256);
                 CREATE TABLE IF NOT EXISTS chunks(
@@ -147,6 +172,13 @@ class Library:
                 CREATE INDEX IF NOT EXISTS idx_chunks_item_ordinal ON chunks(item_id,ordinal);
                 """
             )
+            self._ensure_column(conn, "items", "version_label", "TEXT")
+            self._ensure_column(conn, "items", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
+            self._ensure_column(conn, "items", "stale_after", "TEXT")
+            self._ensure_column(conn, "items", "supersedes_item_id", "TEXT")
+            self._ensure_column(conn, "candidates", "version_label", "TEXT")
+            self._ensure_column(conn, "candidates", "stale_after", "TEXT")
+            self._ensure_column(conn, "candidates", "supersedes_item_id", "TEXT")
             try:
                 conn.execute(
                     "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING "
@@ -155,6 +187,12 @@ class Library:
                 self._fts5 = True
             except sqlite3.OperationalError:
                 self._fts5 = False
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)}
+        if column not in existing:
+            conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, column, definition))
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -173,6 +211,9 @@ class Library:
         language: str = "en",
         rights_note: Optional[str] = None,
         tags: Iterable[str] = (),
+        version_label: Optional[str] = None,
+        stale_after: Optional[str] = None,
+        supersedes_item_id: Optional[str] = None,
     ) -> Candidate:
         src = Path(source_file)
         if not src.is_file():
@@ -185,6 +226,8 @@ class Library:
         trust_class = trust_class.strip().lower() or "unknown"
         if trust_class not in _TRUST_CLASSES:
             raise ValueError("unknown trust class: %s" % trust_class)
+        if supersedes_item_id:
+            self._validate_supersession_target(supersedes_item_id)
         sha = self._sha256(src)
         candidate_id = "cand_%s" % uuid4().hex
         staged = self.incoming_dir / (candidate_id + src.suffix.lower())
@@ -195,11 +238,13 @@ class Library:
             conn.execute(
                 """INSERT INTO candidates(
                     candidate_id,title,source,source_uri,trust_class,language,sha256,staged_path,staged_at,
-                    state,published_at,rights_note,tags_json,rejection_reason
-                ) VALUES(?,?,?,?,?,?,?,?,?,'staged',NULL,?,?,NULL)""",
+                    state,published_at,rights_note,tags_json,rejection_reason,version_label,stale_after,supersedes_item_id
+                ) VALUES(?,?,?,?,?,?,?,?,?,'staged',NULL,?,?,NULL,?,?,?)""",
                 (
                     candidate_id,title.strip(),source.strip(),source_uri.strip() if source_uri else None,
                     trust_class,language.strip() or "en",sha,str(staged),now,rights_note,json.dumps(clean_tags),
+                    version_label.strip() if version_label else None,stale_after.strip() if stale_after else None,
+                    supersedes_item_id,
                 ),
             )
         candidate = self.inspect_candidate(candidate_id)
@@ -215,37 +260,49 @@ class Library:
             raise RuntimeError("staged payload missing")
         if self._sha256(staged) != candidate.sha256:
             raise RuntimeError("staged payload checksum mismatch")
+        if candidate.supersedes_item_id:
+            self._validate_supersession_target(candidate.supersedes_item_id)
         storage = self.archive_dir / candidate.sha256[:2] / candidate.sha256
         storage.parent.mkdir(parents=True, exist_ok=True)
         if not storage.exists():
             shutil.copy2(str(staged), str(storage))
         elif self._sha256(storage) != candidate.sha256:
             raise RuntimeError("archive hash collision or corrupted canonical object")
-
         item_id = "lib_%s" % uuid4().hex
         extracted = self._extract_text(staged, item_id)
         media = mimetypes.guess_type(staged.name)[0] or "application/octet-stream"
         if self._detect_suffix(staged) == ".pdf":
             media = "application/pdf"
         now = self._utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                """INSERT INTO items(
-                    item_id,title,source,source_uri,trust_class,media_type,language,sha256,storage_path,
-                    extracted_text_path,imported_at,published_at,rights_note
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    item_id,candidate.title,candidate.source,candidate.source_uri,candidate.trust_class,media,
-                    candidate.language,candidate.sha256,str(storage),str(extracted) if extracted else None,
-                    now,published_at,candidate.rights_note,
-                ),
-            )
-            conn.executemany("INSERT INTO tags(item_id,tag) VALUES(?,?)", [(item_id, tag) for tag in candidate.tags])
-            conn.execute("UPDATE candidates SET state='published',published_at=? WHERE candidate_id=?", (now, candidate.candidate_id))
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """INSERT INTO items(
+                        item_id,title,source,source_uri,trust_class,media_type,language,sha256,storage_path,
+                        extracted_text_path,imported_at,published_at,rights_note,version_label,lifecycle_state,
+                        stale_after,supersedes_item_id
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?)""",
+                    (
+                        item_id,candidate.title,candidate.source,candidate.source_uri,candidate.trust_class,media,
+                        candidate.language,candidate.sha256,str(storage),str(extracted) if extracted else None,
+                        now,published_at,candidate.rights_note,candidate.version_label,candidate.stale_after,
+                        candidate.supersedes_item_id,
+                    ),
+                )
+                conn.executemany("INSERT INTO tags(item_id,tag) VALUES(?,?)", [(item_id, tag) for tag in candidate.tags])
+                if candidate.supersedes_item_id:
+                    conn.execute("UPDATE items SET lifecycle_state='superseded' WHERE item_id=?", (candidate.supersedes_item_id,))
+                conn.execute("UPDATE candidates SET state='published',published_at=? WHERE candidate_id=?", (now, candidate.candidate_id))
+        except Exception:
+            if extracted:
+                Path(extracted).unlink(missing_ok=True)
+            if not self._payload_referenced(candidate.sha256):
+                storage.unlink(missing_ok=True)
+            raise
         staged.unlink(missing_ok=True)
         item = self.inspect(item_id)
         self._index_item(item)
-        self._write_event("publish", item, {"candidate_id": candidate.candidate_id})
+        self._write_event("publish", item, {"candidate_id": candidate.candidate_id, "supersedes_item_id": candidate.supersedes_item_id})
         return item
 
     def reject(self, candidate_id: str, reason: str) -> Candidate:
@@ -254,10 +311,7 @@ class Library:
             raise ValueError("candidate is not staged")
         Path(candidate.staged_path).unlink(missing_ok=True)
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE candidates SET state='rejected',rejection_reason=? WHERE candidate_id=?",
-                (reason.strip() or "rejected", candidate.candidate_id),
-            )
+            conn.execute("UPDATE candidates SET state='rejected',rejection_reason=? WHERE candidate_id=?", (reason.strip() or "rejected", candidate.candidate_id))
         updated = self.inspect_candidate(candidate.candidate_id)
         self._write_candidate_event("reject", updated, {"reason": updated.rejection_reason})
         return updated
@@ -269,10 +323,7 @@ class Library:
 
     def inspect_candidate(self, identifier: str) -> Candidate:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM candidates WHERE candidate_id=? OR candidate_id LIKE ? OR sha256=? OR sha256 LIKE ? ORDER BY candidate_id",
-                (identifier, identifier + "%", identifier, identifier + "%"),
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM candidates WHERE candidate_id=? OR candidate_id LIKE ? OR sha256=? OR sha256 LIKE ? ORDER BY candidate_id", (identifier, identifier + "%", identifier, identifier + "%")).fetchall()
         if not rows:
             raise KeyError(identifier)
         exact = [row for row in rows if row["candidate_id"] == identifier or row["sha256"] == identifier]
@@ -289,10 +340,7 @@ class Library:
 
     def inspect(self, identifier: str) -> LibraryItem:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM items WHERE item_id=? OR item_id LIKE ? OR sha256=? OR sha256 LIKE ? ORDER BY item_id",
-                (identifier, identifier + "%", identifier, identifier + "%"),
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM items WHERE item_id=? OR item_id LIKE ? OR sha256=? OR sha256 LIKE ? ORDER BY item_id", (identifier, identifier + "%", identifier, identifier + "%")).fetchall()
             if not rows:
                 raise KeyError(identifier)
             exact = [row for row in rows if row["item_id"] == identifier or row["sha256"] == identifier]
@@ -300,7 +348,8 @@ class Library:
             if row is None:
                 raise KeyError("ambiguous identifier: %s" % identifier)
             tags = tuple(r[0] for r in conn.execute("SELECT tag FROM tags WHERE item_id=? ORDER BY tag", (row["item_id"],)))
-        return self._row_to_item(row, tags)
+            superseded_by = self._superseded_by(conn, row["item_id"])
+        return self._row_to_item(row, tags, superseded_by)
 
     def list_items(self) -> List[LibraryItem]:
         with self._connect() as conn:
@@ -308,8 +357,41 @@ class Library:
             items = []
             for row in rows:
                 tags = tuple(r[0] for r in conn.execute("SELECT tag FROM tags WHERE item_id=? ORDER BY tag", (row["item_id"],)))
-                items.append(self._row_to_item(row, tags))
+                items.append(self._row_to_item(row, tags, self._superseded_by(conn, row["item_id"])))
         return items
+
+    def lifecycle(self, identifier: str, *, now: Optional[datetime] = None) -> Dict[str, object]:
+        item = self.inspect(identifier)
+        return {"item_id": item.item_id,"version_label": item.version_label,"lifecycle_state": item.lifecycle_state,"stale_after": item.stale_after,"supersedes_item_id": item.supersedes_item_id,"superseded_by_item_id": item.superseded_by_item_id,"warnings": list(self._lifecycle_warnings(item, now=now))}
+
+    def mark_stale(self, identifier: str) -> LibraryItem:
+        item = self.inspect(identifier)
+        if item.lifecycle_state == "superseded":
+            raise ValueError("superseded item cannot be downgraded to stale")
+        with self._connect() as conn:
+            conn.execute("UPDATE items SET lifecycle_state='stale' WHERE item_id=?", (item.item_id,))
+        updated = self.inspect(item.item_id)
+        self._write_event("stale", updated)
+        return updated
+
+    def refresh(self, identifier: str, *, stale_after: Optional[str] = None) -> LibraryItem:
+        item = self.inspect(identifier)
+        if item.lifecycle_state == "superseded":
+            raise ValueError("superseded item cannot be refreshed to active")
+        next_stale_after = stale_after if stale_after is not None else item.stale_after
+        with self._connect() as conn:
+            conn.execute("UPDATE items SET lifecycle_state='active',stale_after=? WHERE item_id=?", (next_stale_after, item.item_id))
+        updated = self.inspect(item.item_id)
+        self._write_event("refresh", updated, {"stale_after": next_stale_after})
+        return updated
+
+    def stale_items(self, *, now: Optional[datetime] = None) -> List[Dict[str, object]]:
+        results: List[Dict[str, object]] = []
+        for item in self.list_items():
+            warnings = self._lifecycle_warnings(item, now=now)
+            if item.lifecycle_state == "stale" or "freshness_deadline_passed" in warnings:
+                results.append({"item_id": item.item_id,"title": item.title,"lifecycle_state": item.lifecycle_state,"stale_after": item.stale_after,"warnings": list(warnings)})
+        return results
 
     def evidence(self, query: str, limit: int = 10) -> List[EvidenceResult]:
         terms = [token.lower() for token in _TOKEN_RE.findall(query)]
@@ -324,30 +406,10 @@ class Library:
 
     def evidence_bundle(self, query: str, limit: int = 10) -> Dict[str, object]:
         results = self.evidence(query, limit)
-        return {
-            "query_id": "q_%s" % uuid4().hex,
-            "query": query,
-            "reference_only": True,
-            "canonical_receipt": False,
-            "results": [self._evidence_to_dict(result) for result in results],
-        }
+        return {"query_id": "q_%s" % uuid4().hex,"query": query,"reference_only": True,"canonical_receipt": False,"results": [self._evidence_to_dict(result) for result in results]}
 
     def search(self, query: str, limit: int = 10) -> List[SearchResult]:
-        return [
-            SearchResult(
-                item_id=result.item_id,
-                title=result.title,
-                source=result.source,
-                trust_class=result.trust_class,
-                sha256=result.sha256,
-                score=result.score,
-                snippet=result.snippet,
-                chunk_id=result.chunk_id,
-                retrieval_method=result.retrieval_method,
-                location=result.location,
-            )
-            for result in self.evidence(query, limit)
-        ]
+        return [SearchResult(item_id=result.item_id,title=result.title,source=result.source,trust_class=result.trust_class,sha256=result.sha256,score=result.score,snippet=result.snippet,chunk_id=result.chunk_id,retrieval_method=result.retrieval_method,location=result.location,version_label=result.version_label,lifecycle_state=result.lifecycle_state,stale_after=result.stale_after,supersedes_item_id=result.supersedes_item_id,superseded_by_item_id=result.superseded_by_item_id,warnings=result.warnings) for result in self.evidence(query, limit)]
 
     def reindex(self, identifier: Optional[str] = None) -> int:
         items = [self.inspect(identifier)] if identifier else self.list_items()
@@ -363,15 +425,9 @@ class Library:
             if self._fts5:
                 conn.execute("DELETE FROM chunk_fts WHERE item_id=?", (item.item_id,))
             for ordinal, chunk_id, body, location, text_sha in chunks:
-                conn.execute(
-                    "INSERT INTO chunks(item_id,chunk_id,ordinal,body,location_json,text_sha256) VALUES(?,?,?,?,?,?)",
-                    (item.item_id, chunk_id, ordinal, body, json.dumps(location, sort_keys=True), text_sha),
-                )
+                conn.execute("INSERT INTO chunks(item_id,chunk_id,ordinal,body,location_json,text_sha256) VALUES(?,?,?,?,?,?)", (item.item_id, chunk_id, ordinal, body, json.dumps(location, sort_keys=True), text_sha))
                 if self._fts5:
-                    conn.execute(
-                        "INSERT INTO chunk_fts(item_id,chunk_id,title,source,tags,body) VALUES(?,?,?,?,?,?)",
-                        (item.item_id, chunk_id, item.title, item.source, " ".join(item.tags), body),
-                    )
+                    conn.execute("INSERT INTO chunk_fts(item_id,chunk_id,title,source,tags,body) VALUES(?,?,?,?,?,?)", (item.item_id, chunk_id, item.title, item.source, " ".join(item.tags), body))
         return len(chunks)
 
     def _build_chunks(self, item: LibraryItem) -> List[Tuple[int, str, str, Dict[str, object], str]]:
@@ -393,7 +449,6 @@ class Library:
                 chunks.append((ordinal, chunk_id, clean, {"kind": "page", "page": page_number}, text_sha))
                 ordinal += 1
             return chunks
-
         lines = text.splitlines()
         for start in range(0, len(lines), self.chunk_lines):
             end = min(len(lines), start + self.chunk_lines)
@@ -412,70 +467,36 @@ class Library:
             try:
                 match = " AND ".join('\"%s\"' % term.replace('\"', '\"\"') for term in terms)
                 with self._connect() as conn:
-                    rows = conn.execute(
-                        """SELECT f.item_id,f.chunk_id,i.title,i.source,i.source_uri,i.trust_class,i.sha256,
-                                  bm25(chunk_fts,0.0,0.0,5.0,4.0,3.0,1.0) rank,
-                                  snippet(chunk_fts,5,'','',' … ',28) snippet,c.location_json
-                           FROM chunk_fts f JOIN items i ON i.item_id=f.item_id
-                           JOIN chunks c ON c.item_id=f.item_id AND c.chunk_id=f.chunk_id
-                           WHERE chunk_fts MATCH ?
-                           ORDER BY rank ASC,i.title COLLATE NOCASE ASC,f.item_id,f.chunk_id LIMIT ?""",
-                        (match, limit),
-                    ).fetchall()
-                return [
-                    EvidenceResult(
-                        result_id="r_%s" % uuid4().hex,
-                        item_id=row["item_id"],chunk_id=row["chunk_id"],title=row["title"],source=row["source"],
-                        source_uri=row["source_uri"],trust_class=row["trust_class"],sha256=row["sha256"],
-                        score=float(-row["rank"]),snippet=" ".join((row["snippet"] or "").split()),
-                        retrieval_method="full_text_fts5",location=json.loads(row["location_json"]),
-                    )
-                    for row in rows
-                ]
+                    rows = conn.execute("""SELECT f.item_id,f.chunk_id,i.title,i.source,i.source_uri,i.trust_class,i.sha256,bm25(chunk_fts,0.0,0.0,5.0,4.0,3.0,1.0) rank,snippet(chunk_fts,5,'','',' … ',28) snippet,c.location_json FROM chunk_fts f JOIN items i ON i.item_id=f.item_id JOIN chunks c ON c.item_id=f.item_id AND c.chunk_id=f.chunk_id WHERE chunk_fts MATCH ? ORDER BY rank ASC,i.title COLLATE NOCASE ASC,f.item_id,f.chunk_id LIMIT ?""", (match, limit)).fetchall()
+                return [self._row_to_evidence(row, float(-row["rank"]), " ".join((row["snippet"] or "").split()), "full_text_fts5") for row in rows]
             except sqlite3.OperationalError:
                 pass
-
         results: List[EvidenceResult] = []
         with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT c.*,i.title,i.source,i.source_uri,i.trust_class,i.sha256
-                   FROM chunks c JOIN items i ON i.item_id=c.item_id
-                   ORDER BY i.title COLLATE NOCASE,c.ordinal,c.chunk_id"""
-            ).fetchall()
+            rows = conn.execute("""SELECT c.*,i.title,i.source,i.source_uri,i.trust_class,i.sha256 FROM chunks c JOIN items i ON i.item_id=c.item_id ORDER BY i.title COLLATE NOCASE,c.ordinal,c.chunk_id""").fetchall()
         for row in rows:
             body = row["body"].lower()
             score = float(sum(body.count(term) for term in terms))
             if score <= 0:
                 continue
-            results.append(
-                EvidenceResult(
-                    result_id="r_%s" % uuid4().hex,item_id=row["item_id"],chunk_id=row["chunk_id"],
-                    title=row["title"],source=row["source"],source_uri=row["source_uri"],
-                    trust_class=row["trust_class"],sha256=row["sha256"],score=score,
-                    snippet=self._snippet(body, terms),retrieval_method="full_text_deterministic",
-                    location=json.loads(row["location_json"]),
-                )
-            )
+            results.append(self._row_to_evidence(row, score, self._snippet(body, terms), "full_text_deterministic"))
         results.sort(key=lambda result: (-result.score, result.title.lower(), result.item_id, result.chunk_id or ""))
         return results[:limit]
 
-    def _evidence_metadata(self, terms: Sequence[str], limit: int, seen_items: set) -> List[EvidenceResult]:
+    def _row_to_evidence(self, row: sqlite3.Row, score: float, snippet: str, method: str) -> EvidenceResult:
+        item = self.inspect(row["item_id"])
+        return EvidenceResult(result_id="r_%s" % uuid4().hex,item_id=item.item_id,chunk_id=row["chunk_id"],title=item.title,source=item.source,source_uri=item.source_uri,trust_class=item.trust_class,sha256=item.sha256,score=score,snippet=snippet,retrieval_method=method,location=json.loads(row["location_json"]),version_label=item.version_label,lifecycle_state=item.lifecycle_state,stale_after=item.stale_after,supersedes_item_id=item.supersedes_item_id,superseded_by_item_id=item.superseded_by_item_id,warnings=self._lifecycle_warnings(item))
+
+    def _evidence_metadata(self, terms: Sequence[str], limit: int, seen_items: Set[str]) -> List[EvidenceResult]:
         results: List[EvidenceResult] = []
         for item in self.list_items():
             if item.item_id in seen_items:
                 continue
-            metadata = " ".join((item.title, item.source, item.trust_class, " ".join(item.tags))).lower()
+            metadata = " ".join((item.title, item.source, item.trust_class, item.version_label or "", " ".join(item.tags))).lower()
             score = float(sum(metadata.count(term) * 5 for term in terms))
             if score <= 0:
                 continue
-            results.append(
-                EvidenceResult(
-                    result_id="r_%s" % uuid4().hex,item_id=item.item_id,chunk_id=None,title=item.title,
-                    source=item.source,source_uri=item.source_uri,trust_class=item.trust_class,sha256=item.sha256,
-                    score=score,snippet=self._snippet(metadata, terms),retrieval_method="metadata",
-                    location={"kind": "metadata"},
-                )
-            )
+            results.append(EvidenceResult(result_id="r_%s" % uuid4().hex,item_id=item.item_id,chunk_id=None,title=item.title,source=item.source,source_uri=item.source_uri,trust_class=item.trust_class,sha256=item.sha256,score=score,snippet=self._snippet(metadata, terms),retrieval_method="metadata",location={"kind": "metadata"},version_label=item.version_label,lifecycle_state=item.lifecycle_state,stale_after=item.stale_after,supersedes_item_id=item.supersedes_item_id,superseded_by_item_id=item.superseded_by_item_id,warnings=self._lifecycle_warnings(item)))
         results.sort(key=lambda result: (-result.score, result.title.lower(), result.item_id))
         return results[:limit]
 
@@ -488,6 +509,8 @@ class Library:
 
     def remove(self, identifier: str) -> LibraryItem:
         item = self.inspect(identifier)
+        if item.supersedes_item_id or item.superseded_by_item_id:
+            raise ValueError("cannot remove item linked by source lifecycle")
         with self._connect() as conn:
             if self._fts5:
                 conn.execute("DELETE FROM chunk_fts WHERE item_id=?", (item.item_id,))
@@ -499,6 +522,61 @@ class Library:
             Path(item.storage_path).unlink(missing_ok=True)
         self._write_event("remove", item, {"canonical_payload_removed": remaining == 0})
         return item
+
+    def _validate_supersession_target(self, identifier: str) -> LibraryItem:
+        target = self.inspect(identifier)
+        if target.superseded_by_item_id:
+            raise ValueError("supersession target already has a successor")
+        if target.lifecycle_state == "superseded":
+            raise ValueError("supersession target is already superseded")
+        return target
+
+    @staticmethod
+    def _superseded_by(conn: sqlite3.Connection, item_id: str) -> Optional[str]:
+        rows = conn.execute("SELECT item_id FROM items WHERE supersedes_item_id=? ORDER BY imported_at,item_id", (item_id,)).fetchall()
+        if len(rows) > 1:
+            raise RuntimeError("source lifecycle has multiple successors")
+        return rows[0][0] if rows else None
+
+    def _payload_referenced(self, sha256: str) -> bool:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM items WHERE sha256=?", (sha256,)).fetchone()[0] > 0
+
+    def _lifecycle_warnings(self, item: LibraryItem, *, now: Optional[datetime] = None) -> Tuple[str, ...]:
+        warnings: List[str] = []
+        if item.lifecycle_state == "superseded":
+            warnings.append("source_superseded")
+        elif item.lifecycle_state == "stale":
+            warnings.append("source_stale")
+        if item.stale_after:
+            deadline = self._parse_time(item.stale_after)
+            if deadline is None:
+                warnings.append("invalid_stale_after")
+            else:
+                current = now or datetime.now(timezone.utc)
+                if current.tzinfo is None:
+                    current = current.replace(tzinfo=timezone.utc)
+                else:
+                    current = current.astimezone(timezone.utc)
+                if current >= deadline:
+                    warnings.append("freshness_deadline_passed")
+        return tuple(warnings)
+
+    @staticmethod
+    def _parse_time(value: str) -> Optional[datetime]:
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            if len(text) == 10:
+                parsed_date = date.fromisoformat(text)
+                return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=timezone.utc)
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
 
     def _extract_text(self, source: Path, item_id: str) -> Optional[Path]:
         size = source.stat().st_size
@@ -541,48 +619,26 @@ class Library:
         return [(page.extract_text() or "") for page in reader.pages]
 
     def _write_event(self, action: str, item: LibraryItem, details: Optional[dict] = None) -> None:
-        self._append_event({
-            "event_id": "lev_%s" % uuid4().hex,"timestamp": self._utc_now(),"action": action,
-            "item_id": item.item_id,"sha256": item.sha256,"canonical_receipt": False,
-            "receipt_scope": "velours_library_local_evidence","details": details or {},
-        })
+        self._append_event({"event_id": "lev_%s" % uuid4().hex,"timestamp": self._utc_now(),"action": action,"item_id": item.item_id,"sha256": item.sha256,"canonical_receipt": False,"receipt_scope": "velours_library_local_evidence","details": details or {}})
 
     def _write_candidate_event(self, action: str, candidate: Candidate, details: Optional[dict] = None) -> None:
-        self._append_event({
-            "event_id": "lev_%s" % uuid4().hex,"timestamp": self._utc_now(),"action": action,
-            "candidate_id": candidate.candidate_id,"sha256": candidate.sha256,"canonical_receipt": False,
-            "receipt_scope": "velours_library_local_evidence","details": details or {},
-        })
+        self._append_event({"event_id": "lev_%s" % uuid4().hex,"timestamp": self._utc_now(),"action": action,"candidate_id": candidate.candidate_id,"sha256": candidate.sha256,"canonical_receipt": False,"receipt_scope": "velours_library_local_evidence","details": details or {}})
 
     def _append_event(self, event: dict) -> None:
         with self.receipt_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, sort_keys=True) + "\n")
 
     @staticmethod
-    def _row_to_item(row: sqlite3.Row, tags: Tuple[str, ...]) -> LibraryItem:
-        return LibraryItem(
-            row["item_id"],row["title"],row["source"],row["source_uri"],row["trust_class"],row["media_type"],
-            row["language"],row["sha256"],row["storage_path"],row["extracted_text_path"],row["imported_at"],
-            row["published_at"],row["rights_note"],tags,
-        )
+    def _row_to_item(row: sqlite3.Row, tags: Tuple[str, ...], superseded_by: Optional[str]) -> LibraryItem:
+        return LibraryItem(row["item_id"],row["title"],row["source"],row["source_uri"],row["trust_class"],row["media_type"],row["language"],row["sha256"],row["storage_path"],row["extracted_text_path"],row["imported_at"],row["published_at"],row["rights_note"],tags,row["version_label"],row["lifecycle_state"] or "active",row["stale_after"],row["supersedes_item_id"],superseded_by)
 
     @staticmethod
     def _row_to_candidate(row: sqlite3.Row) -> Candidate:
-        return Candidate(
-            row["candidate_id"],row["title"],row["source"],row["source_uri"],row["trust_class"],row["language"],
-            row["sha256"],row["staged_path"],row["staged_at"],row["state"],row["published_at"],row["rights_note"],
-            tuple(json.loads(row["tags_json"])),row["rejection_reason"],
-        )
+        return Candidate(row["candidate_id"],row["title"],row["source"],row["source_uri"],row["trust_class"],row["language"],row["sha256"],row["staged_path"],row["staged_at"],row["state"],row["published_at"],row["rights_note"],tuple(json.loads(row["tags_json"])),row["rejection_reason"],row["version_label"],row["stale_after"],row["supersedes_item_id"])
 
     @staticmethod
     def _evidence_to_dict(result: EvidenceResult) -> Dict[str, object]:
-        return {
-            "result_id": result.result_id,"item_id": result.item_id,"chunk_id": result.chunk_id,
-            "title": result.title,"source": result.source,"source_uri": result.source_uri,
-            "trust_class": result.trust_class,"sha256": result.sha256,"score": result.score,
-            "snippet": result.snippet,"retrieval_method": result.retrieval_method,"location": result.location,
-            "reference_only": result.reference_only,"canonical_receipt": result.canonical_receipt,
-        }
+        return {"result_id": result.result_id,"item_id": result.item_id,"chunk_id": result.chunk_id,"title": result.title,"source": result.source,"source_uri": result.source_uri,"trust_class": result.trust_class,"sha256": result.sha256,"score": result.score,"snippet": result.snippet,"retrieval_method": result.retrieval_method,"location": result.location,"reference_only": result.reference_only,"canonical_receipt": result.canonical_receipt,"version_label": result.version_label,"lifecycle_state": result.lifecycle_state,"stale_after": result.stale_after,"supersedes_item_id": result.supersedes_item_id,"superseded_by_item_id": result.superseded_by_item_id,"warnings": list(result.warnings)}
 
     @staticmethod
     def _chunk_id(source_sha256: str, location_key: str, text_sha256: str) -> str:

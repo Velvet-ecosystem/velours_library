@@ -110,3 +110,80 @@ def test_metadata_only_item_is_still_retrievable(tmp_path: Path):
     library = Library(tmp_path / "lib"); item = library.add(source, title="Radio Datasheet Binary", source="Maker", trust_class="primary", tags=["radio"])
     result = library.evidence("radio")[0]
     assert result.item_id == item.item_id and result.chunk_id is None and result.retrieval_method == "metadata" and result.location == {"kind": "metadata"}
+
+
+def test_version_and_freshness_metadata_round_trip(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("versioned manual")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Manual", source="Maker", version_label="1.4", stale_after="2030-01-01")
+    inspected = library.inspect(item.item_id)
+    assert inspected.version_label == "1.4" and inspected.lifecycle_state == "active" and inspected.stale_after == "2030-01-01"
+
+
+def test_supersession_marks_old_and_returns_bidirectional_lineage(tmp_path: Path):
+    old_source = tmp_path / "old.txt"; old_source.write_text("needle old")
+    new_source = tmp_path / "new.txt"; new_source.write_text("needle new")
+    library = Library(tmp_path / "lib"); old = library.add(old_source, title="Manual", source="Maker", version_label="1.0")
+    new = library.add(new_source, title="Manual", source="Maker", version_label="1.1", supersedes_item_id=old.item_id)
+    old_now = library.inspect(old.item_id); new_now = library.inspect(new.item_id)
+    assert old_now.lifecycle_state == "superseded" and old_now.superseded_by_item_id == new.item_id
+    assert new_now.supersedes_item_id == old.item_id and new_now.lifecycle_state == "active"
+    old_result = next(result for result in library.evidence("needle", 10) if result.item_id == old.item_id)
+    assert "source_superseded" in old_result.warnings
+
+
+def test_expired_freshness_deadline_is_warning_not_score_mutation(tmp_path: Path):
+    old_source = tmp_path / "old.txt"; old_source.write_text("same needle")
+    fresh_source = tmp_path / "fresh.txt"; fresh_source.write_text("same needle")
+    library = Library(tmp_path / "lib"); old = library.add(old_source, title="A", source="Maker", stale_after="2000-01-01")
+    fresh = library.add(fresh_source, title="B", source="Maker", stale_after="2099-01-01")
+    results = {result.item_id: result for result in library.evidence("needle", 10)}
+    assert "freshness_deadline_passed" in results[old.item_id].warnings
+    assert "freshness_deadline_passed" not in results[fresh.item_id].warnings
+    assert results[old.item_id].score == results[fresh.item_id].score
+
+
+def test_invalid_stale_after_becomes_warning_not_exception(tmp_path: Path):
+    source = tmp_path / "manual.txt"; source.write_text("needle")
+    library = Library(tmp_path / "lib"); item = library.add(source, title="Manual", source="Maker", stale_after="eventually-ish")
+    result = library.evidence("needle")[0]
+    assert result.item_id == item.item_id and "invalid_stale_after" in result.warnings
+
+
+def test_superseded_item_cannot_be_downgraded_to_stale(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.mark_stale(old.item_id)
+    assert library.inspect(old.item_id).lifecycle_state == "superseded"
+
+
+def test_superseded_item_cannot_be_refreshed_active(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.refresh(old.item_id)
+    assert library.inspect(old.item_id).lifecycle_state == "superseded"
+
+
+def test_invalid_supersession_target_fails_before_staged_or_archive_bytes(tmp_path: Path):
+    source = tmp_path / "new.txt"; source.write_text("replacement")
+    library = Library(tmp_path / "lib")
+    with pytest.raises(KeyError): library.stage(source, title="New", source="Maker", supersedes_item_id="lib_missing")
+    assert list(library.incoming_dir.iterdir()) == []
+    assert list(library.archive_dir.rglob("*")) == []
+
+
+def test_supersession_is_linear_and_rejects_second_successor(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    c = tmp_path / "c.txt"; c.write_text("c")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.stage(c, title="C", source="Maker", supersedes_item_id=old.item_id)
+
+
+def test_linked_revisions_cannot_be_removed(tmp_path: Path):
+    a = tmp_path / "a.txt"; a.write_text("a")
+    b = tmp_path / "b.txt"; b.write_text("b")
+    library = Library(tmp_path / "lib"); old = library.add(a, title="A", source="Maker"); new = library.add(b, title="B", source="Maker", supersedes_item_id=old.item_id)
+    with pytest.raises(ValueError): library.remove(old.item_id)
+    with pytest.raises(ValueError): library.remove(new.item_id)

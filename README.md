@@ -1,6 +1,6 @@
 # Velour's Library
 
-Velour's Library is Velvet's canonical shared, local-first, provenance-aware knowledge archive. Cyberdeck, vehicle, home, forge, Founder, and future bodies may consume it without inheriting one another's hardware, UI, or deployment assumptions.
+Velour's Library is Velvet's canonical shared, local-first, provenance-aware knowledge archive. It preserves source evidence, keeps acquisition and transformation history, and returns retrieval results with enough provenance for another Velvet component to reason about them without treating retrieval as belief.
 
 ## Core principles
 
@@ -12,11 +12,14 @@ Velour's Library is Velvet's canonical shared, local-first, provenance-aware kno
 - Receipts matter.
 - Knowledge is modular.
 - Models are optional.
+- Currency is metadata, not truth.
 
 ## Guarded ingestion
 
 ```bash
-velour --root ./library-data stage ./incoming/manual.md --title "Workshop Manual" --source manufacturer --trust primary
+velour --root ./library-data stage ./incoming/manual.md \
+  --title "Workshop Manual" --source manufacturer --trust primary \
+  --version 1.4 --stale-after 2027-01-01
 velour --root ./library-data candidates --state staged
 velour --root ./library-data publish <candidate-id>
 ```
@@ -31,18 +34,20 @@ velour --root ./library-data evidence "pulley alignment"
 velour --root ./library-data reindex
 ```
 
-Search results carry source identity, trust class, canonical hash, deterministic chunk identity, retrieval method, and location. Text uses line ranges. PDFs preserve page locations when PDF extraction is available. `evidence` emits a machine-readable, reference-only evidence bundle and does not create a canonical Velvet receipt.
+Search results carry source identity, trust class, canonical hash, deterministic chunk identity, retrieval method, and location. Text uses line ranges. PDFs preserve page locations when PDF extraction is available. Evidence bundles are reference-only and do not create canonical Velvet receipts.
 
-## Storage layers
+## Source lifecycle
 
-```text
-incoming/      quarantined acquisition candidates
-archive/       canonical content-addressed source material
-catalog/       SQLite metadata, provenance, lifecycle state
-indexes/       rebuildable extracted text and retrieval chunks
-packs/         curated portable knowledge collections
-receipts/      local library lifecycle evidence
-docs/          doctrine and contracts
+```bash
+velour --root ./library-data add ./manual-1.4.md \
+  --title "Workshop Manual" --source manufacturer --trust primary \
+  --version 1.4 --supersedes <old-item-id>
+velour --root ./library-data lifecycle <item-id>
+velour --root ./library-data stale <item-id>
+velour --root ./library-data refresh <item-id> --stale-after 2027-08-01
+velour --root ./library-data stale-list
 ```
 
-Velour is the librarian, not the oracle. She keeps the evidence, where it came from, what happened to it, and where a retrieved passage lives. Velvet remains responsible for reasoning with what comes off the shelves.
+Velour preserves superseded revisions instead of deleting history. Retrieval carries lifecycle state, replacement links, freshness deadlines, and explicit warnings. Relevance scoring is not silently altered by recency or version state.
+
+Velour is the librarian, not the oracle. She keeps the evidence, where it came from, what happened to it, which revision replaced it, and where a retrieved passage lives. Velvet remains responsible for reasoning with what comes off the shelves.

@@ -23,54 +23,34 @@ def build_parser() -> argparse.ArgumentParser:
         target.add_argument("--language", default="en")
         target.add_argument("--rights-note")
         target.add_argument("--tag", action="append", default=[])
+        target.add_argument("--version")
+        target.add_argument("--stale-after")
+        target.add_argument("--supersedes")
 
     add_metadata(sub.add_parser("stage", help="Quarantine a source file for review"))
     add = sub.add_parser("add", help="Stage and immediately publish a source file")
     add_metadata(add)
     add.add_argument("--published-at")
-
-    publish = sub.add_parser("publish")
-    publish.add_argument("candidate_id")
-    publish.add_argument("--published-at")
-    reject = sub.add_parser("reject")
-    reject.add_argument("candidate_id")
-    reject.add_argument("--reason", required=True)
-    candidates = sub.add_parser("candidates")
-    candidates.add_argument("--state")
-
-    for name in ("inspect", "verify", "remove"):
-        command = sub.add_parser(name)
-        command.add_argument("identifier")
-
-    search = sub.add_parser("search")
-    search.add_argument("query")
-    search.add_argument("--limit", type=int, default=10)
-    evidence = sub.add_parser("evidence", help="Return a machine-readable retrieval evidence bundle")
-    evidence.add_argument("query")
-    evidence.add_argument("--limit", type=int, default=10)
-    reindex = sub.add_parser("reindex", help="Rebuild deterministic retrieval chunks")
-    reindex.add_argument("identifier", nargs="?")
+    publish = sub.add_parser("publish"); publish.add_argument("candidate_id"); publish.add_argument("--published-at")
+    reject = sub.add_parser("reject"); reject.add_argument("candidate_id"); reject.add_argument("--reason", required=True)
+    candidates = sub.add_parser("candidates"); candidates.add_argument("--state")
+    for name in ("inspect", "verify", "remove", "lifecycle", "stale"):
+        command = sub.add_parser(name); command.add_argument("identifier")
+    refresh = sub.add_parser("refresh"); refresh.add_argument("identifier"); refresh.add_argument("--stale-after")
+    search = sub.add_parser("search"); search.add_argument("query"); search.add_argument("--limit", type=int, default=10)
+    evidence = sub.add_parser("evidence", help="Return a machine-readable retrieval evidence bundle"); evidence.add_argument("query"); evidence.add_argument("--limit", type=int, default=10)
+    reindex = sub.add_parser("reindex", help="Rebuild deterministic retrieval chunks"); reindex.add_argument("identifier", nargs="?")
+    sub.add_parser("stale-list", help="List explicitly stale or freshness-expired sources")
     sub.add_parser("list")
     return parser
 
 
 def _item(item: LibraryItem) -> dict:
-    return {
-        "item_id": item.item_id,"title": item.title,"source": item.source,"source_uri": item.source_uri,
-        "trust_class": item.trust_class,"media_type": item.media_type,"language": item.language,"sha256": item.sha256,
-        "storage_path": item.storage_path,"extracted_text_path": item.extracted_text_path,"imported_at": item.imported_at,
-        "published_at": item.published_at,"rights_note": item.rights_note,"tags": list(item.tags),
-    }
+    return {"item_id": item.item_id,"title": item.title,"source": item.source,"source_uri": item.source_uri,"trust_class": item.trust_class,"media_type": item.media_type,"language": item.language,"sha256": item.sha256,"storage_path": item.storage_path,"extracted_text_path": item.extracted_text_path,"imported_at": item.imported_at,"published_at": item.published_at,"rights_note": item.rights_note,"tags": list(item.tags),"version_label": item.version_label,"lifecycle_state": item.lifecycle_state,"stale_after": item.stale_after,"supersedes_item_id": item.supersedes_item_id,"superseded_by_item_id": item.superseded_by_item_id}
 
 
 def _candidate(candidate: Candidate) -> dict:
-    return {
-        "candidate_id": candidate.candidate_id,"title": candidate.title,"source": candidate.source,
-        "source_uri": candidate.source_uri,"trust_class": candidate.trust_class,"language": candidate.language,
-        "sha256": candidate.sha256,"staged_path": candidate.staged_path,"staged_at": candidate.staged_at,
-        "state": candidate.state,"published_at": candidate.published_at,"rights_note": candidate.rights_note,
-        "tags": list(candidate.tags),"rejection_reason": candidate.rejection_reason,
-    }
+    return {"candidate_id": candidate.candidate_id,"title": candidate.title,"source": candidate.source,"source_uri": candidate.source_uri,"trust_class": candidate.trust_class,"language": candidate.language,"sha256": candidate.sha256,"staged_path": candidate.staged_path,"staged_at": candidate.staged_at,"state": candidate.state,"published_at": candidate.published_at,"rights_note": candidate.rights_note,"tags": list(candidate.tags),"rejection_reason": candidate.rejection_reason,"version_label": candidate.version_label,"stale_after": candidate.stale_after,"supersedes_item_id": candidate.supersedes_item_id}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -78,10 +58,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     library = Library(Path(args.root))
     try:
         if args.command in ("stage", "add"):
-            common = {
-                "title": args.title,"source": args.source,"source_uri": args.source_uri,"trust_class": args.trust,
-                "language": args.language,"rights_note": args.rights_note,"tags": args.tag,
-            }
+            common = {"title": args.title,"source": args.source,"source_uri": args.source_uri,"trust_class": args.trust,"language": args.language,"rights_note": args.rights_note,"tags": args.tag,"version_label": args.version,"stale_after": args.stale_after,"supersedes_item_id": args.supersedes}
             if args.command == "stage":
                 print(json.dumps(_candidate(library.stage(args.file, **common)), indent=2, sort_keys=True))
             else:
@@ -97,12 +74,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if args.command == "inspect":
             print(json.dumps(_item(library.inspect(args.identifier)), indent=2, sort_keys=True)); return 0
+        if args.command == "lifecycle":
+            print(json.dumps(library.lifecycle(args.identifier), indent=2, sort_keys=True)); return 0
+        if args.command == "stale":
+            print(json.dumps(_item(library.mark_stale(args.identifier)), indent=2, sort_keys=True)); return 0
+        if args.command == "refresh":
+            print(json.dumps(_item(library.refresh(args.identifier, stale_after=args.stale_after)), indent=2, sort_keys=True)); return 0
+        if args.command == "stale-list":
+            print(json.dumps(library.stale_items(), indent=2, sort_keys=True)); return 0
         if args.command == "search":
             results = library.search(args.query, args.limit)
             for result in results:
                 print("[%0.3f] %s (%s)" % (result.score, result.title, result.item_id))
                 print("  source=%s trust=%s sha256=%s" % (result.source, result.trust_class, result.sha256))
                 print("  chunk=%s method=%s location=%s" % (result.chunk_id, result.retrieval_method, json.dumps(result.location, sort_keys=True)))
+                print("  version=%s lifecycle=%s warnings=%s" % (result.version_label, result.lifecycle_state, ",".join(result.warnings)))
                 if result.snippet:
                     print("  %s" % result.snippet)
             return 0 if results else 1
@@ -116,7 +102,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(json.dumps(_item(library.remove(args.identifier)), indent=2, sort_keys=True)); return 0
         if args.command == "list":
             for item in library.list_items():
-                print("%s\t%s\t%s\t%s" % (item.item_id, item.trust_class, item.source, item.title))
+                print("%s\t%s\t%s\t%s\t%s" % (item.item_id, item.lifecycle_state, item.trust_class, item.source, item.title))
             return 0
     except (FileNotFoundError, ValueError, KeyError, RuntimeError) as exc:
         print(str(exc)); return 2
