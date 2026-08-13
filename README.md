@@ -84,3 +84,18 @@ velour-pack-adopt --root ./library-data origin <local-item-id>
 ```
 
 Remote trust labels, tags, stale deadlines, lifecycle state, and revision links remain origin metadata unless a separate local policy deliberately promotes them. Adoption events are noncanonical local evidence, imported source-node receipts are not accepted as local receipts, and adoption grants no Runtime, Court, executor, shell, network, CAN, relay, or physical-control authority.
+
+## Pack lifecycle and updates
+
+Adopted pack revisions are registered into an explicit local lifecycle before one becomes the preferred revision for that library.
+
+```bash
+velour-pack-lifecycle --root ./library-data register <adoption-id>
+velour-pack-lifecycle --root ./library-data activate <adoption-id>
+velour-pack-lifecycle --root ./library-data supersede <old-adoption-id> <new-adoption-id>
+velour-pack-lifecycle --root ./library-data current "Workshop"
+```
+
+Lifecycle states are `installed`, `active`, `stale`, `superseded`, and `removed`. Only one revision may be active per pack family. A successor must already be fully adopted and registered before it can replace another revision, and the predecessor state, successor state, and family active pointer switch in one atomic family-file update.
+
+`active` means preferred **knowledge-pack revision** only. It grants no execution authority. Lifecycle removal is logical and preserves adoption records, local items, and canonical archive bytes.
