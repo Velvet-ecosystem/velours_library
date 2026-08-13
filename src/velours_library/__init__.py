@@ -4,6 +4,7 @@ from .pack_adoption import PackAdoptionManager
 from .pack_intake import PackIntakeCandidate, PackIntakeManager
 from .pack_lifecycle import PackLifecycleManager
 from .packs import KnowledgePackManager
+from .source_provenance import SourceProvenance, SourceProvenanceManager
 
 __all__ = [
     "Candidate",
@@ -16,5 +17,7 @@ __all__ = [
     "PackIntakeManager",
     "PackLifecycleManager",
     "SearchResult",
+    "SourceProvenance",
+    "SourceProvenanceManager",
 ]
-__version__ = "0.8.0"
+__version__ = "0.9.0"
