@@ -59,3 +59,16 @@ Knowledge packs freeze a curated set of library items into a deterministic manif
 Exports use content-addressed `objects/sha256/` storage, deduplicate identical payloads, verify every object before publication, and can be checked again on an isolated machine without the source library. Lifecycle changes after pack creation appear as drift warnings; they do not silently rewrite historical manifests.
 
 Checksums establish integrity, not authorship. Cryptographic signing remains a separate future trust-layer decision.
+
+## Pack intake quarantine
+
+Transferred packs enter a separate verified quarantine before any target library adopts their contents. Intake preflights size/member limits, refuses symlink payloads, verifies the exported bundle, reconstructs only the canonical manifest and hash-addressed payload set, and verifies the quarantined copy again.
+
+```bash
+velour-pack-intake --root ./library-data stage ./cartridge \
+  --source-label "garage node"
+velour-pack-intake --root ./library-data list --state verified
+velour-pack-intake --root ./library-data approve <pack-candidate-id>
+```
+
+`approved` means eligible for a later adoption step. It does not install the pack, grant authority, or turn its trust metadata into truth.
