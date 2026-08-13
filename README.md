@@ -72,3 +72,15 @@ velour-pack-intake --root ./library-data approve <pack-candidate-id>
 ```
 
 `approved` means eligible for a later adoption step. It does not install the pack, grant authority, or turn its trust metadata into truth.
+
+## Pack adoption
+
+Approved cartridges may be adopted into the local catalog through a separate target-side transaction. Adoption re-verifies the quarantined pack, creates fresh local item identities, uses the ordinary local `stage -> publish -> verify` path, and records pack-origin provenance without importing the sending node's authority decisions.
+
+```bash
+velour-pack-adopt --root ./library-data plan <pack-candidate-id>
+velour-pack-adopt --root ./library-data adopt <pack-candidate-id> --trust unknown
+velour-pack-adopt --root ./library-data origin <local-item-id>
+```
+
+Remote trust labels, tags, stale deadlines, lifecycle state, and revision links remain origin metadata unless a separate local policy deliberately promotes them. Adoption events are noncanonical local evidence, imported source-node receipts are not accepted as local receipts, and adoption grants no Runtime, Court, executor, shell, network, CAN, relay, or physical-control authority.
