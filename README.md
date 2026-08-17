@@ -52,11 +52,31 @@ Velour preserves superseded revisions instead of deleting history. Retrieval car
 
 Velour is the librarian, not the oracle. She keeps the evidence, where it came from, what happened to it, which revision replaced it, and where a retrieved passage lives. Velvet remains responsible for reasoning with what comes off the shelves.
 
+## Source provenance
+
+Source provenance sidecars add richer source history without rewriting the core catalog. Records are bound to the local `item_id` and canonical SHA-256 payload identity.
+
+```bash
+velour-provenance --root ./library-data set <item-id> \
+  --author "A. Engineer" \
+  --publisher "Maker Press" \
+  --license-status "manufacturer reference" \
+  --published-at 2024-05-01 \
+  --acquired-at 2026-07-30 \
+  --acquisition-method "publisher download"
+
+velour-provenance --root ./library-data inspect <item-id>
+```
+
+Source provenance may record author, publisher, license or usage status, source publication date, acquisition date/method, and the source library's original import time. These fields are evidence metadata only. They do not change trust class, truth status, or execution authority.
+
 ## Portable knowledge packs
 
 Knowledge packs freeze a curated set of library items into a deterministic manifest that snapshots provenance, trust, version, lifecycle state, and canonical payload hashes. Pack identity is derived from canonical JSON rather than a random identifier.
 
-Exports use content-addressed `objects/sha256/` storage, deduplicate identical payloads, verify every object before publication, and can be checked again on an isolated machine without the source library. Lifecycle changes after pack creation appear as drift warnings; they do not silently rewrite historical manifests.
+Exports use content-addressed `objects/sha256/` storage, deduplicate identical payloads, verify every object before publication, and can be checked again on an isolated machine without the source library. Lifecycle or provenance changes after pack creation appear as drift warnings; they do not silently rewrite historical manifests.
+
+New manifests may include an optional `source_provenance` object for each member. Older v1 manifests without that object remain valid.
 
 Checksums establish integrity, not authorship. Cryptographic signing remains a separate future trust-layer decision.
 
@@ -81,9 +101,10 @@ Approved cartridges may be adopted into the local catalog through a separate tar
 velour-pack-adopt --root ./library-data plan <pack-candidate-id>
 velour-pack-adopt --root ./library-data adopt <pack-candidate-id> --trust unknown
 velour-pack-adopt --root ./library-data origin <local-item-id>
+velour-provenance --root ./library-data import-adoption <adoption-id>
 ```
 
-Remote trust labels, tags, stale deadlines, lifecycle state, and revision links remain origin metadata unless a separate local policy deliberately promotes them. Adoption events are noncanonical local evidence, imported source-node receipts are not accepted as local receipts, and adoption grants no Runtime, Court, executor, shell, network, CAN, relay, or physical-control authority.
+Remote trust labels, tags, stale deadlines, lifecycle state, and revision links remain origin metadata unless a separate local policy deliberately promotes them. Rich source provenance can be restored from the quarantined pack onto the fresh local item identities after adoption. Imported source-node receipts are not accepted as local receipts, and adoption or provenance import grants no Runtime, Court, executor, shell, network, CAN, relay, or physical-control authority.
 
 ## Pack lifecycle and updates
 

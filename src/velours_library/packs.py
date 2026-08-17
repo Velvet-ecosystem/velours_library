@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional
 
+from .source_provenance import SourceProvenanceManager, validate_source_provenance_snapshot
+
 _PACK_SCHEMA = "velours_library.knowledge_pack.v1"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -36,6 +38,8 @@ class KnowledgePackManager:
 
     def __init__(self, library) -> None:
         self.library = library
+        root = getattr(library, "root", None)
+        self.provenance = SourceProvenanceManager(root, library=library) if root is not None else None
 
     def build_manifest(self, name: str, version: str, item_ids: Iterable[str], *, description: Optional[str] = None) -> Dict[str, object]:
         clean_name = name.strip()
@@ -94,6 +98,11 @@ class KnowledgePackManager:
                 seen_items.add(item_id)
             if not isinstance(sha, str) or not _SHA256_RE.match(sha):
                 errors.append("invalid_member_sha256:%s" % (item_id or "unknown"))
+            if "source_provenance" in raw:
+                try:
+                    validate_source_provenance_snapshot(raw.get("source_provenance"))
+                except ValueError as exc:
+                    errors.append("invalid_member_source_provenance:%s:%s" % (item_id or "unknown", str(exc)))
         seed = {key: value for key, value in manifest.items() if key != "pack_id"}
         expected = _pack_id(seed)
         if manifest.get("pack_id") != expected:
@@ -197,9 +206,8 @@ class KnowledgePackManager:
                 errors.append("export_payload_checksum_mismatch:%s" % sha)
         return {"valid": not errors, "errors": sorted(set(errors)), "warnings": [], "manifest": manifest}
 
-    @staticmethod
-    def _member_snapshot(item, payload_bytes: int) -> Dict[str, object]:
-        return {
+    def _member_snapshot(self, item, payload_bytes: int) -> Dict[str, object]:
+        member: Dict[str, object] = {
             "item_id": item.item_id,
             "title": item.title,
             "source": item.source,
@@ -217,9 +225,18 @@ class KnowledgePackManager:
             "rights_note": item.rights_note,
             "tags": list(item.tags),
         }
+        if self.provenance is not None:
+            snapshot = self.provenance.snapshot(item.item_id)
+            if snapshot is not None:
+                member["source_provenance"] = snapshot
+        return member
 
-    @staticmethod
-    def _append_drift_warnings(warnings: List[str], member: Mapping[str, object], item) -> None:
+    def _append_drift_warnings(self, warnings: List[str], member: Mapping[str, object], item) -> None:
         for field in ("version_label", "lifecycle_state", "stale_after", "supersedes_item_id", "superseded_by_item_id"):
             if member.get(field) != getattr(item, field, None):
                 warnings.append("member_%s_drift:%s" % (field, item.item_id))
+        if self.provenance is not None:
+            current = self.provenance.snapshot(item.item_id)
+            frozen = member.get("source_provenance") if "source_provenance" in member else None
+            if frozen != current:
+                warnings.append("member_source_provenance_drift:%s" % item.item_id)
