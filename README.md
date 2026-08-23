@@ -26,6 +26,31 @@ velour --root ./library-data publish <candidate-id>
 
 `add` is a convenience path for trusted/local material, but it still stages and validates before publication. Staged material never appears in normal retrieval.
 
+## Approved remote acquisition
+
+`velour-acquire` is the governed delivery path from approved HTTP(S) sources to the existing staging dock. It is intentionally single-resource and policy-driven. It does not crawl sites, publish candidates, or turn downloaded material into trusted truth.
+
+```bash
+velour-acquire \
+  --root ./library-data \
+  --policy ./local/acquisition-policy.json \
+  check https://manuals.example.org/products/widget.pdf
+
+velour-acquire \
+  --root ./library-data \
+  --policy ./local/acquisition-policy.json \
+  fetch https://manuals.example.org/products/widget.pdf \
+  --title "Widget Service Manual" \
+  --tag workshop \
+  --version 2.1
+```
+
+Successful acquisition produces a normal `staged` candidate plus an acquisition audit record. Publication remains a separate explicit action through the existing Library workflow.
+
+Source policies use exact origins and optional path prefixes, can constrain content types and byte counts, reject private/local addresses by default, re-check redirects, and may pin an expected SHA-256 when a source publishes one. Real source policies are deployment-local configuration rather than repository defaults.
+
+See `docs/APPROVED_SOURCE_ACQUISITION.md` and `schemas/acquisition_policy.schema.json`.
+
 ## Retrieval evidence
 
 ```bash
