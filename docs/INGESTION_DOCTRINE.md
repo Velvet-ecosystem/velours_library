@@ -15,6 +15,8 @@ The goal of ingestion is not to make information disappear into a database. It i
 9. **Receipt** — record what happened, with tool/version information where available.
 10. **Publish internally** — make the item available to retrieval only after validation policy passes.
 
+The approved remote-acquisition implementation in `src/velours_library/acquisition.py` performs only the first delivery step and then hands the bytes to the existing `Library.stage()` quarantine boundary. It does not collapse acquisition, review, and publication into one action. See `APPROVED_SOURCE_ACQUISITION.md`.
+
 ## Rules
 
 - Never silently replace canonical source material with generated text.
@@ -25,3 +27,4 @@ The goal of ingestion is not to make information disappear into a database. It i
 - A failed transform must not invalidate an otherwise preserved source.
 - Unknown or ambiguous licensing must be recorded rather than guessed.
 - Retrieval should expose stale/version warnings when relevant.
+- Network acquisition must not imply publication, truth, authority, or source enrollment.
