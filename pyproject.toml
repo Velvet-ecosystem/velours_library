@@ -7,11 +7,23 @@ name = "velours-library"
 version = "0.10.0"
 description = "Local-first, provenance-aware offline knowledge library for the Velvet ecosystem"
 requires-python = ">=3.8"
+license = { file = "LICENSE" }
 dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.12",
+]
 
 [project.optional-dependencies]
 pdf = ["pypdf>=4,<6"]
 dev = ["pytest>=7,<9"]
+
+[project.urls]
+Repository = "https://github.com/Velvet-ecosystem/velours_library"
+Issues = "https://github.com/Velvet-ecosystem/velours_library/issues"
 
 [project.scripts]
 velour = "velours_library.cli:main"

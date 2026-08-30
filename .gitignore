@@ -7,6 +7,7 @@ indexes/**/*
 !indexes/.gitkeep
 receipts/**/*
 !receipts/.gitkeep
+library-data/
 
 # Local databases / indexes
 *.sqlite
@@ -27,7 +28,14 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Secrets
+# Secrets and deployment-local configuration
 .env
+.env.*
+!.env.example
 *.key
 *.pem
+*.p12
+*.pfx
+*.token
+secrets/
+local/
