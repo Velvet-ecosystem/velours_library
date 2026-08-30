@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://velvet.local/schemas/library/acquisition_policy.schema.json",
+  "title": "Velour Library Acquisition Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "sources"],
+  "properties": {
+    "schema": {
+      "const": "velours.library.acquisition-policy.v1"
+    },
+    "default_max_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "user_agent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "origin", "source_label"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "origin": {
+            "type": "string",
+            "pattern": "^https?://"
+          },
+          "path_prefix": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "source_label": {"type": "string", "minLength": 1},
+          "trust_class": {
+            "type": "string",
+            "enum": ["primary", "scholarly", "secondary", "community", "owner", "generated", "unknown"]
+          },
+          "allowed_content_types": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "allow_private_network": {"type": "boolean"},
+          "rights_note": {"type": ["string", "null"]},
+          "tags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}
