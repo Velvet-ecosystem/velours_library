@@ -1,6 +1,6 @@
 # Public Release Readiness
 
-This record defines the final public-release gates for `velours_library`.
+This record captures the final public-release review for `velours_library`.
 
 ## Public-safe scope
 
@@ -23,18 +23,22 @@ Public release does not grant execution authority. Library content and retrieval
 
 Remote retrieval remains read-only and reference-only. Off-host use requires a protected private interface or authenticated/encrypted transport. Bearer admission tokens are deployment-local and are not transport encryption or Velvet identity.
 
-## Release gates
+## Verified before visibility change
 
-Before changing visibility to public, verify:
+- Current `main` contains the intended approved-source acquisition and Home read-only retrieval work.
+- The final public-hardening patch changes documentation, ignore rules, and package metadata only; it does not alter Library behavior or authority.
+- The public-hardening pull request completed the Library test matrix successfully.
+- An isolated TruffleHog 3.97.1 workflow fetched repository branches/history and scanned 265 chunks / 609,315 bytes with 0 verified secrets and 0 unverified secrets.
+- The normal CI workflow uses read-only repository contents permission.
+- GPLv3 is present and package metadata now declares the license and public repository/issue locations.
+- Deployment-local token files, certificate/key material, local configuration, and generated `library-data/` are excluded by `.gitignore` in the public-hardening patch.
 
-1. `main` contains the intended current acquisition and Home read-only retrieval work.
-2. No open pull requests contain required release changes.
-3. CI passes on the final public-hardening pull request.
-4. A full fetched Git-history secret scan reports no verified or unverified secrets.
-5. Obsolete branches are removed before visibility changes.
-6. Repository settings are reviewed and the standard Velvet `protect main` ruleset is active immediately after public visibility is enabled.
-7. Public vulnerability reporting / security settings are enabled where available.
+## Owner-controlled steps remaining
 
-## Current release posture
+1. Merge the final public-hardening pull request.
+2. Remove obsolete branches before changing visibility.
+3. Change repository visibility to public.
+4. Confirm the standard Velvet `protect main` ruleset is active on the default branch.
+5. Enable/review public vulnerability reporting and other repository security settings where available.
 
-Prepared for public release subject to the gates above. Repository visibility remains an explicit owner-controlled action.
+Repository visibility remains an explicit owner-controlled action.
