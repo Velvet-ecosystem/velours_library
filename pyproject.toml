@@ -32,6 +32,7 @@ velour-pack-intake = "velours_library.pack_intake:main"
 velour-pack-adopt = "velours_library.pack_adoption:main"
 velour-pack-lifecycle = "velours_library.pack_lifecycle:main"
 velour-provenance = "velours_library.source_provenance:main"
+velour-serve = "velours_library.retrieval_service:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
