@@ -109,10 +109,12 @@ The catalog grants no authority and does not replace canonical Velvet receipts. 
 Initialize only after the encrypted filesystem is positively mounted at `/srv/velvet`:
 
 ```bash
-findmnt --target /srv/velvet
+findmnt --mountpoint /srv/velvet
 velour-vault --root /srv/velvet init
 velour-vault --root /srv/velvet status
 ```
+
+The production `velour-vault` entry point independently checks that `/srv/velvet` is an actual mountpoint and returns a fail-closed `vault-unavailable` result when it is not. Non-production roots remain available for tests and development.
 
 The initializer writes `.velvet-vault.json` into the vault root. Runtime uses that manifest as the presence sentinel for the attached vault.
 
@@ -196,7 +198,7 @@ sudo chmod 000 /srv/velvet
 
 Then mount the ext4 vault. The mounted filesystem has its own root ownership and permissions, so configure those while it is mounted for the `velvet` service account. When the vault disappears, the protected underlying mountpoint is exposed again and ordinary archive writers fail closed instead of filling Founder's eMMC.
 
-This mountpoint guard does not replace checking the actual mount during provisioning. Use `findmnt`, `lsblk`, and UUID-based mount configuration as the source of physical-device truth.
+This mountpoint guard does not replace checking the actual mount during provisioning. Use `findmnt --mountpoint`, `lsblk`, and UUID-based mount configuration as the source of physical-device truth.
 
 ## Runtime resource advertisement
 
