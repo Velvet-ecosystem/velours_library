@@ -106,12 +106,15 @@ The catalog grants no authority and does not replace canonical Velvet receipts. 
 
 ## Safe initialization
 
-After the filesystem is mounted:
+Initialize only after the encrypted filesystem is positively mounted at `/srv/velvet`:
 
 ```bash
+findmnt --target /srv/velvet
 velour-vault --root /srv/velvet init
 velour-vault --root /srv/velvet status
 ```
+
+The initializer writes `.velvet-vault.json` into the vault root. Runtime uses that manifest as the presence sentinel for the attached vault.
 
 Register an existing media object:
 
@@ -173,17 +176,41 @@ sudo mkdir -p /srv/velvet
 sudo mount /dev/mapper/velvet_vault_crypt /srv/velvet
 ```
 
-Set ownership to the deployment account that runs the Library and archive writers, then initialize the logical vault.
+Set ownership on the mounted filesystem to the deployment account that runs the Library and archive writers, then initialize the logical vault.
 
 For the first bench bring-up, manual LUKS unlock is preferred. Unattended key storage is deployment-specific and should not be hidden in this public repository. Recovery material should be kept separately from the Founder.
 
 For persistent mounting, use filesystem/LUKS UUIDs rather than `/dev/sdX` names. USB device names can change between boots.
 
+### Guard the bare mountpoint
+
+A mountpoint directory still exists on Founder's internal filesystem when the external vault is absent. That creates a dangerous failure mode if a service writes to `/srv/velvet` while the drive is unmounted: the bytes would silently land on internal storage.
+
+After creating the empty mountpoint and before mounting the vault, make the underlying directory non-writable to ordinary services:
+
+```bash
+sudo mkdir -p /srv/velvet
+sudo chown root:root /srv/velvet
+sudo chmod 000 /srv/velvet
+```
+
+Then mount the ext4 vault. The mounted filesystem has its own root ownership and permissions, so configure those while it is mounted for the `velvet` service account. When the vault disappears, the protected underlying mountpoint is exposed again and ordinary archive writers fail closed instead of filling Founder's eMMC.
+
+This mountpoint guard does not replace checking the actual mount during provisioning. Use `findmnt`, `lsblk`, and UUID-based mount configuration as the source of physical-device truth.
+
 ## Runtime resource advertisement
 
-`velvet-runtime` already supports explicit attached filesystem resources. The Founder deployment can advertise `/srv/velvet` as the reviewed attached storage path.
+`velvet-runtime` already supports explicit attached filesystem resources. The mounted vault remains `/srv/velvet`, but Runtime should probe:
 
-The runtime resource record should describe capacity only. It does not expose vault content and carries no authority.
+```text
+/srv/velvet/.velvet-vault.json
+```
+
+rather than the bare `/srv/velvet` directory.
+
+`os.statvfs()` reports the same filesystem capacity for the manifest file. If the external vault is removed, the manifest disappears, so the next Runtime resource probe omits `storage.vault-1tb` rather than accidentally reporting Founder's underlying filesystem as the vault.
+
+The runtime resource record describes capacity only. It does not expose vault content and carries no authority.
 
 Recommended capabilities for the shared vault resource are:
 
@@ -212,6 +239,7 @@ vault absent or locked
     -> archive capability unavailable
     -> Runtime remains alive
     -> degraded storage condition can be surfaced
+    -> ordinary vault writes fail closed at the protected mountpoint
     -> no fictional capacity is advertised
 ```
 
