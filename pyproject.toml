@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "velours-library"
-version = "0.10.0"
+version = "0.11.0"
 description = "Local-first, provenance-aware offline knowledge library for the Velvet ecosystem"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
@@ -33,6 +33,7 @@ velour-pack-adopt = "velours_library.pack_adoption:main"
 velour-pack-lifecycle = "velours_library.pack_lifecycle:main"
 velour-provenance = "velours_library.source_provenance:main"
 velour-serve = "velours_library.retrieval_service:main"
+velour-vault = "velours_library.vault:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
