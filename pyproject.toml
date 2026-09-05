@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "velours-library"
-version = "0.11.0"
+version = "0.12.0"
 description = "Local-first, provenance-aware offline knowledge library for the Velvet ecosystem"
 requires-python = ">=3.8"
 license = { file = "LICENSE" }
@@ -28,6 +28,9 @@ Issues = "https://github.com/Velvet-ecosystem/velours_library/issues"
 [project.scripts]
 velour = "velours_library.cli:main"
 velour-acquire = "velours_library.acquisition:main"
+velour-ingest = "velours_library.ingest:main"
+velour-doctor = "velours_library.doctor:main"
+velour-zim = "velours_library.zim_shelf:main"
 velour-pack-intake = "velours_library.pack_intake:main"
 velour-pack-adopt = "velours_library.pack_adoption:main"
 velour-pack-lifecycle = "velours_library.pack_lifecycle:main"
