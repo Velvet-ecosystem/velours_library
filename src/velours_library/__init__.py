@@ -13,6 +13,7 @@ from .pack_adoption import PackAdoptionManager
 from .pack_intake import PackIntakeCandidate, PackIntakeManager
 from .pack_lifecycle import PackLifecycleManager
 from .packs import KnowledgePackManager
+from .snapshot import LibrarySnapshotManager
 from .source_provenance import SourceProvenance, SourceProvenanceManager
 from .zim_shelf import ZimArchive, ZimShelf
 
@@ -30,6 +31,7 @@ __all__ = [
     "Library",
     "LibraryDoctor",
     "LibraryItem",
+    "LibrarySnapshotManager",
     "PackAdoptionManager",
     "PackIntakeCandidate",
     "PackIntakeManager",
