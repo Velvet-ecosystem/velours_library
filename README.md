@@ -26,6 +26,52 @@ velour --root ./library-data publish <candidate-id>
 
 `add` is a convenience path for trusted/local material, but it still stages and validates before publication. Staged material never appears in normal retrieval.
 
+## Bulk document loading dock
+
+`velour-ingest` recursively feeds manuals and document batches into the same guarded Library boundary. Its default action is **stage only**.
+
+```bash
+velour-ingest \
+  --root /srv/velvet/library \
+  ./manual-drop \
+  --source owner-import \
+  --trust owner
+```
+
+Supported searchable derivatives include ordinary text, PDF, HTML/XHTML, DOCX, ODT and EPUB. Optional local OCR adds scanned-PDF and image text without rewriting the canonical source.
+
+A sibling `<filename>.velour.json` sidecar can provide explicit title, source, trust, tags, rights/version/freshness metadata, or exclude a file from a batch. Batch reruns skip an already-present SHA/source/source-URI combination unless duplicate provenance is explicitly requested.
+
+See `docs/BULK_INGESTION.md`, `docs/AUTOMATED_INTAKE.md`, and `schemas/ingest_sidecar.schema.json`.
+
+## Archive health and catalog snapshots
+
+`velour-doctor` performs a read-only consistency pass across canonical archive bytes, staged candidates, extracted-text references, orphan files, shared hashes, and stale source state.
+
+```bash
+velour-doctor --root /srv/velvet/library
+```
+
+`velour-snapshot` creates deterministic metadata snapshots for cheap backup inventory and later drift comparison. Snapshot identity excludes generation time, so an unchanged logical catalog produces the same snapshot ID.
+
+```bash
+velour-snapshot --root /srv/velvet/library create
+```
+
+Neither tool repairs, deletes, publishes, changes trust, or creates canonical Velvet receipts. See `docs/LIBRARY_DOCTOR.md` and `docs/CATALOG_SNAPSHOTS.md`.
+
+## Large offline web references
+
+Multi-gigabyte ZIM archives belong on an external Kiwix shelf rather than being duplicated into the bounded per-document canonical archive.
+
+```bash
+velour-zim --root /srv/velvet/library init
+velour-zim --root /srv/velvet/library status
+velour-zim --root /srv/velvet/library serve
+```
+
+The server wrapper defaults to loopback-only binding and blocked direct external navigation. Non-loopback binding requires explicit operator permission. See `docs/ZIM_REFERENCE_SHELF.md`.
+
 ## Approved remote acquisition
 
 `velour-acquire` is the governed delivery path from approved HTTP(S) sources to the existing staging dock. It is intentionally single-resource and policy-driven. It does not crawl sites, publish candidates, or turn downloaded material into trusted truth.
