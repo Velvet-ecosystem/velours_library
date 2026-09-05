@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 DEFAULT_MAX_WINDOW_CHARACTERS = 480
 DEFAULT_MAX_WINDOW_CHUNKS = 3
@@ -80,7 +80,7 @@ def expand_evidence_bundle(
                     max_chunks=max_chunks,
                 )
             )
-        except (KeyError, TypeError, ValueError, OSError):
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError):
             expanded.append(dict(raw))
     output["results"] = expanded
     return output
@@ -101,7 +101,7 @@ def _expand_result(
     item_id = _required_text(current, "item_id")
     chunk_id = _required_text(current, "chunk_id")
     expected_sha = _required_text(current, "sha256").lower()
-    if len(expected_sha) != 64:
+    if len(expected_sha) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha):
         return current
 
     # Read only from the local catalog. The seed result must still name the
@@ -121,8 +121,8 @@ def _expand_result(
             return current
         seed_ordinal = int(seed["ordinal"])
 
-        # Fetch enough local context to locate a section boundary without ever
-        # returning more than max_chunks. Final overlap is checked separately.
+        # Fetch enough nearby context to locate a section boundary. The final
+        # returned overlap is separately capped to max_chunks.
         radius = max_chunks
         rows = conn.execute(
             """SELECT chunk_id, ordinal, body
@@ -146,15 +146,18 @@ def _expand_result(
         seed_span,
         max_characters=max_characters,
     )
-    start, end, truncated = _enforce_chunk_bound(
+    bounded = _enforce_chunk_bound(
         spans,
         start,
         end,
         seed_span,
         max_chunks=max_chunks,
         max_characters=max_characters,
-        truncated=truncated,
     )
+    if bounded is None:
+        return current
+    start, end, chunk_truncated = bounded
+    truncated = truncated or chunk_truncated
     if end <= start:
         return current
 
@@ -241,7 +244,7 @@ def _matching_markdown_section(
     text: str,
     query_tokens: Tuple[str, ...],
     seed: _ChunkSpan,
-) -> Tuple[int, int] | None:
+) -> Optional[Tuple[int, int]]:
     if not query_tokens:
         return None
     headings = list(_HEADING_RE.finditer(text))
@@ -249,15 +252,13 @@ def _matching_markdown_section(
         heading_tokens = set(_meaningful_tokens(match.group(2)))
         if not set(query_tokens).issubset(heading_tokens):
             continue
-        if not (seed.start <= match.start() <= seed.end or match.start() <= seed.start < _section_end(headings, index, text)):
+        section_end = _section_end(headings, index, text)
+        if not (
+            seed.start <= match.start() <= seed.end
+            or match.start() <= seed.start < section_end
+        ):
             continue
-        level = len(match.group(1))
-        end = len(text)
-        for following in headings[index + 1 :]:
-            if len(following.group(1)) <= level:
-                end = following.start()
-                break
-        return match.start(), _rstrip_index(text, match.start(), end)
+        return match.start(), _rstrip_index(text, match.start(), section_end)
     return None
 
 
@@ -295,18 +296,21 @@ def _enforce_chunk_bound(
     *,
     max_chunks: int,
     max_characters: int,
-    truncated: bool,
-) -> Tuple[int, int, bool]:
+) -> Optional[Tuple[int, int, bool]]:
     overlapping = [span for span in spans if span.end > start and span.start < end]
+    if not overlapping:
+        return None
     if len(overlapping) <= max_chunks:
-        return start, end, truncated
+        return start, min(end, start + max_characters), False
 
-    seed_index = next(i for i, span in enumerate(overlapping) if span.chunk_id == seed.chunk_id)
+    try:
+        seed_index = next(i for i, span in enumerate(overlapping) if span.chunk_id == seed.chunk_id)
+    except StopIteration:
+        return None
     first = max(0, min(seed_index, len(overlapping) - max_chunks))
     chosen = overlapping[first : first + max_chunks]
     bounded_start = max(start, chosen[0].start)
     bounded_end = min(end, chosen[-1].end, bounded_start + max_characters)
-    bounded_start = _snap_start("".join([]), bounded_start) if False else bounded_start
     return bounded_start, bounded_end, True
 
 
