@@ -48,7 +48,7 @@ def test_bulk_can_keep_duplicate_provenance_when_explicit(tmp_path: Path):
 
 
 def test_sidecar_overrides_metadata_and_can_ignore(tmp_path: Path):
-    source = tmp_path / "factory.pdf"; source.write_bytes(b"%PDF-fake")
+    source = tmp_path / "factory.txt"; source.write_text("manual", encoding="utf-8")
     sidecar = source.with_name(source.name + ".velour.json")
     sidecar.write_text(json.dumps({
         "title": "Factory Service Manual",
@@ -69,11 +69,11 @@ def test_sidecar_overrides_metadata_and_can_ignore(tmp_path: Path):
 
 def test_html_is_extracted_without_scripts(tmp_path: Path):
     source = tmp_path / "page.html"
-    source.write_text("<html><head><title>Relay Manual</title><script>bad needle</script></head><body><h1>Relay</h1><p>coil resistance needle</p></body></html>", encoding="utf-8")
+    source.write_text("<html><head><title>Relay Manual</title><script>scriptpoison</script></head><body><h1>Relay</h1><p>coil resistance needle</p></body></html>", encoding="utf-8")
     library = DocumentLibrary(tmp_path / "lib")
     item = library.add(source, title="Relay Manual", source="maker")
     assert library.evidence("resistance")[0].item_id == item.item_id
-    assert library.search("bad needle") == []
+    assert library.search("scriptpoison") == []
 
 
 def test_docx_text_is_extracted_with_standard_library_only(tmp_path: Path):
