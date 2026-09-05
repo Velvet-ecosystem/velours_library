@@ -1,0 +1,21 @@
+[Unit]
+Description=Stage documents from Velvet Library drop folder
+After=local-fs.target
+ConditionPathIsMountPoint=/srv/velvet
+
+[Service]
+Type=oneshot
+User=velvet
+Group=velvet
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/srv/velvet/library /srv/velvet/staging/library-drop
+ExecStart=/usr/local/bin/velour-ingest --root /srv/velvet/library /srv/velvet/staging/library-drop --source owner-drop --trust owner --source-uri-base vault://staging/library-drop
