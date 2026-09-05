@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Velvet Library document drop folder
+
+[Path]
+PathChanged=/srv/velvet/staging/library-drop
+Unit=velour-library-drop.service
+
+[Install]
+WantedBy=multi-user.target
