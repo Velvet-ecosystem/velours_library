@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Velvet-ecosystem/velours_library/schemas/ingest_sidecar.schema.json",
+  "title": "Velour document ingest sidecar",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ignore": {"type": "boolean"},
+    "title": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "source_uri": {"type": "string", "minLength": 1},
+    "trust": {
+      "type": "string",
+      "enum": ["primary", "scholarly", "secondary", "community", "owner", "generated", "unknown"]
+    },
+    "trust_class": {
+      "type": "string",
+      "enum": ["primary", "scholarly", "secondary", "community", "owner", "generated", "unknown"]
+    },
+    "language": {"type": "string", "minLength": 1},
+    "rights_note": {"type": "string"},
+    "tags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "version": {"type": "string", "minLength": 1},
+    "version_label": {"type": "string", "minLength": 1},
+    "stale_after": {"type": "string", "minLength": 1},
+    "supersedes": {"type": "string", "minLength": 1},
+    "supersedes_item_id": {"type": "string", "minLength": 1}
+  }
+}
