@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional, Sequence
 from uuid import uuid4
 
 from .catalog import Library
+from .evidence_window import expand_evidence_bundle
 
 SERVICE_SCHEMA = "velours.library.remote-retrieval.v1"
 SEARCH_SCHEMA = "velours.library.remote-search.v1"
@@ -260,7 +261,11 @@ def build_handler(
                     }
                     result_count = len(results)
                 else:
-                    bundle = library.evidence_bundle(query, limit)
+                    bundle = expand_evidence_bundle(
+                        library,
+                        query,
+                        library.evidence_bundle(query, limit),
+                    )
                     results_raw = bundle.get("results", []) if isinstance(bundle, dict) else []
                     response = {
                         "schema": EVIDENCE_SCHEMA,
