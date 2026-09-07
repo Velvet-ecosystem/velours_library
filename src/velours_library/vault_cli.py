@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from .vault import DEFAULT_VAULT_ROOT, main as vault_main
+from .filesystem_identity import FilesystemIdentityError, verified_filesystem
+from .vault import DEFAULT_VAULT_ROOT, _production_root, main as vault_main
 
 
 def _selected_root(argv: Sequence[str]) -> Path:
@@ -25,7 +26,14 @@ def _selected_root(argv: Sequence[str]) -> Path:
 
 
 def _is_production_root(path: Path) -> bool:
-    return path.resolve(strict=False) == DEFAULT_VAULT_ROOT.resolve(strict=False)
+    return _production_root(path)
+
+
+def _selected_uuid(argv: Sequence[str]) -> Optional[str]:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--expected-filesystem-uuid", default=os.environ.get("VELVET_VAULT_FILESYSTEM_UUID"))
+    parsed, _ = parser.parse_known_args(list(argv))
+    return parsed.expected_filesystem_uuid
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -36,13 +44,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return vault_main(values)
 
     root = _selected_root(values)
-    if _is_production_root(root) and not os.path.ismount(str(root)):
+    expected_uuid = _selected_uuid(values)
+    try:
+        if _is_production_root(root) or expected_uuid is not None:
+            with verified_filesystem(root, expected_uuid):
+                return vault_main(values)
+        return vault_main(values)
+    except FilesystemIdentityError as exc:
         print(
             json.dumps(
                 {
                     "schema": "velvet.vault.preflight.v1",
                     "state": "vault-unavailable",
-                    "reason": "production-root-not-mounted",
+                    "reason": str(exc),
                     "root": str(root),
                     "authority": "none",
                 },
@@ -51,8 +65,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
         return 3
-
-    return vault_main(values)
 
 
 if __name__ == "__main__":

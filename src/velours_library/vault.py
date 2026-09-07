@@ -9,16 +9,21 @@ explicitly selected vault root.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from functools import wraps
 import hashlib
 import json
 import os
 import sqlite3
+from threading import RLock
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .filesystem_identity import FilesystemIdentityError, verified_filesystem
 
 
 VAULT_LAYOUT_VERSION = 1
@@ -112,6 +117,21 @@ class VaultHealth:
     reserve_guard_active: bool
 
 
+def _production_root(path: Path) -> bool:
+    # Retain development roots; production subdirectories/aliases cannot bypass
+    # the UUID requirement simply by changing the spelling of --root.
+    return any(_is_relative_to(candidate, DEFAULT_VAULT_ROOT.absolute())
+               for candidate in (path.absolute(), path.resolve(strict=False)))
+
+
+def _vault_operation(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        with self._storage_boundary():
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class VaultManager:
     """Manage a mounted Velvet vault without owning block-device operations."""
 
@@ -121,12 +141,51 @@ class VaultManager:
         *,
         policy: VaultPolicy = VaultPolicy(),
         statvfs_provider=None,
+        expected_filesystem_uuid: Optional[str] = None,
     ) -> None:
         if not isinstance(root, Path):
             root = Path(root)
         self.root = root.expanduser()
         self.policy = policy
         self._statvfs = statvfs_provider or os.statvfs
+        self.expected_filesystem_uuid = (expected_filesystem_uuid if expected_filesystem_uuid is not None
+                                         else os.environ.get("VELVET_VAULT_FILESYSTEM_UUID"))
+        self._binding = None
+        self._operation_lock = RLock()
+
+    @contextmanager
+    def _storage_boundary(self):
+        with self._operation_lock:
+            if self._binding is not None:
+                self._binding.check_path_current()
+                yield
+            elif self.expected_filesystem_uuid is not None or _production_root(self.root):
+                with verified_filesystem(self.root, self.expected_filesystem_uuid) as binding:
+                    if not binding.held_path.is_dir():
+                        raise FilesystemIdentityError("vault-root-not-directory")
+                    self._binding = binding
+                    try:
+                        yield
+                    finally:
+                        self._binding = None
+            else:
+                yield
+
+    def _io_path(self, relative: str = "") -> Path:
+        if self._binding is None:
+            return self.root / relative
+        self._binding.check_path_current()
+        path = self._binding.held_path
+        parts = Path(relative)
+        if parts.is_absolute() or ".." in parts.parts:
+            raise ValueError("vault path must stay inside vault root")
+        for part in parts.parts:
+            path = path / part
+            if path.is_symlink():
+                raise ValueError("vault layout may not traverse symlinks")
+            if path.exists() and path.stat().st_dev != self._binding.metadata.st_dev:
+                raise FilesystemIdentityError("vault-path-on-different-filesystem")
+        return path
 
     @property
     def manifest_path(self) -> Path:
@@ -136,6 +195,7 @@ class VaultManager:
     def catalog_path(self) -> Path:
         return self.root / "catalog" / "vault.sqlite3"
 
+    @_vault_operation
     def initialize(self) -> Dict[str, Any]:
         self._ensure_root_safe(create=True)
         for relative in VAULT_DIRECTORIES:
@@ -150,9 +210,10 @@ class VaultManager:
             "catalog": str(self.catalog_path),
         }
 
+    @_vault_operation
     def health(self) -> VaultHealth:
         self._ensure_root_safe(create=False)
-        stats = self._statvfs(str(self.root))
+        stats = self._statvfs(str(self._io_path()))
         block_size = int(stats.f_frsize or stats.f_bsize)
         total = int(block_size * stats.f_blocks)
         available = int(block_size * stats.f_bavail)
@@ -179,6 +240,7 @@ class VaultManager:
             reserve_guard_active=state == "reserve_guard",
         )
 
+    @_vault_operation
     def register_object(
         self,
         path: Path,
@@ -218,7 +280,7 @@ class VaultManager:
 
         self._initialize_catalog()
         try:
-            with sqlite3.connect(str(self.catalog_path)) as db:
+            with sqlite3.connect(str(self._io_path("catalog/vault.sqlite3"))) as db:
                 db.execute(
                     """
                     INSERT INTO vault_objects (
@@ -245,6 +307,7 @@ class VaultManager:
             raise ValueError("vault object path is already registered") from exc
         return record
 
+    @_vault_operation
     def list_objects(
         self,
         *,
@@ -275,7 +338,7 @@ class VaultManager:
         )
         params.append(limit)
 
-        with sqlite3.connect(str(self.catalog_path)) as db:
+        with sqlite3.connect(str(self._io_path("catalog/vault.sqlite3"))) as db:
             rows = db.execute(query, params).fetchall()
 
         return [
@@ -295,13 +358,14 @@ class VaultManager:
             for row in rows
         ]
 
+    @_vault_operation
     def promote(self, object_id: str, retention: RetentionClass) -> Dict[str, Any]:
         self._ensure_root_safe(create=False)
         object_id = _text(object_id, "object_id")
         requested = _retention(retention)
         self._initialize_catalog()
 
-        with sqlite3.connect(str(self.catalog_path)) as db:
+        with sqlite3.connect(str(self._io_path("catalog/vault.sqlite3"))) as db:
             row = db.execute(
                 "SELECT retention FROM vault_objects WHERE object_id = ?", (object_id,)
             ).fetchone()
@@ -318,12 +382,13 @@ class VaultManager:
 
         return {"object_id": object_id, "retention": requested.value}
 
+    @_vault_operation
     def verify_object(self, object_id: str) -> Dict[str, Any]:
         self._ensure_root_safe(create=False)
         object_id = _text(object_id, "object_id")
         self._initialize_catalog()
 
-        with sqlite3.connect(str(self.catalog_path)) as db:
+        with sqlite3.connect(str(self._io_path("catalog/vault.sqlite3"))) as db:
             row = db.execute(
                 "SELECT path, sha256 FROM vault_objects WHERE object_id = ?", (object_id,)
             ).fetchone()
@@ -331,17 +396,17 @@ class VaultManager:
             raise KeyError(object_id)
 
         relative = Path(row[0])
-        candidate = self.root / relative
+        candidate = self._io_path(relative.as_posix())
         if candidate.is_symlink():
             return {"object_id": object_id, "verified": False, "reason": "object-symlinked"}
         resolved = candidate.resolve(strict=True)
-        root_resolved = self.root.resolve(strict=True)
+        root_resolved = self._io_path().resolve(strict=True)
         if not _is_relative_to(resolved, root_resolved):
             raise ValueError("catalog path escaped vault root")
         if not resolved.is_file():
             return {"object_id": object_id, "verified": False, "reason": "object-unavailable"}
 
-        digest = _sha256_file(resolved)
+        digest = _sha256_file(candidate)
         return {
             "object_id": object_id,
             "verified": digest == row[1],
@@ -350,6 +415,9 @@ class VaultManager:
         }
 
     def _ensure_root_safe(self, *, create: bool) -> None:
+        if self._binding is not None:
+            self._io_path()
+            return  # The verified root already exists; never mkdir a fallback.
         if self.root.exists() and self.root.is_symlink():
             raise ValueError("vault root may not be a symlink")
         if create:
@@ -361,9 +429,11 @@ class VaultManager:
         relative_path = Path(relative)
         if relative_path.is_absolute() or ".." in relative_path.parts:
             raise ValueError("vault layout paths must stay relative")
-        current = self.root
+        current = self._io_path()
+        partial = Path()
         for part in relative_path.parts:
-            current = current / part
+            partial = partial / part
+            current = self._io_path(partial.as_posix())
             if current.exists() and current.is_symlink():
                 raise ValueError("vault layout may not traverse symlinks")
             current.mkdir(exist_ok=True)
@@ -371,6 +441,14 @@ class VaultManager:
     def _resolve_object_path(self, path: Path) -> Tuple[Path, Path]:
         if not isinstance(path, Path):
             path = Path(path)
+        if self._binding is not None:
+            if path.is_absolute():
+                try:
+                    path = path.relative_to(self.root.absolute())
+                except ValueError as exc:
+                    raise ValueError("vault object path must stay inside vault root") from exc
+            candidate = self._io_path(path.as_posix())
+            return path, candidate
         candidate = path if path.is_absolute() else self.root / path
         if candidate.is_symlink():
             raise ValueError("symlink vault objects are not accepted")
@@ -389,7 +467,7 @@ class VaultManager:
 
     def _initialize_catalog(self) -> None:
         self._ensure_directory("catalog")
-        with sqlite3.connect(str(self.catalog_path)) as db:
+        with sqlite3.connect(str(self._io_path("catalog/vault.sqlite3"))) as db:
             db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS vault_objects (
@@ -418,10 +496,11 @@ class VaultManager:
             db.commit()
 
     def _load_or_create_manifest(self) -> Dict[str, Any]:
-        if self.manifest_path.exists():
-            if self.manifest_path.is_symlink():
+        manifest_path = self._io_path(".velvet-vault.json")
+        if manifest_path.exists():
+            if manifest_path.is_symlink():
                 raise ValueError("vault manifest may not be a symlink")
-            data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
             if data.get("schema") != "velvet.vault.v1":
                 raise ValueError("unsupported vault manifest schema")
             if data.get("layout_version") != VAULT_LAYOUT_VERSION:
@@ -445,7 +524,7 @@ class VaultManager:
             "cleanup_trigger_fraction": self.policy.cleanup_trigger_fraction,
             "hard_reserve_fraction": self.policy.hard_reserve_fraction,
         }
-        self.manifest_path.write_text(
+        manifest_path.write_text(
             json.dumps(data, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
@@ -506,6 +585,7 @@ def _parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("VELVET_VAULT_ROOT", str(DEFAULT_VAULT_ROOT))),
     )
     parser.add_argument("--cleanup-trigger", type=float, default=0.15)
+    parser.add_argument("--expected-filesystem-uuid", default=os.environ.get("VELVET_VAULT_FILESYSTEM_UUID"))
     parser.add_argument("--hard-reserve", type=float, default=0.10)
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -551,7 +631,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cleanup_trigger_fraction=args.cleanup_trigger,
         hard_reserve_fraction=args.hard_reserve,
     )
-    manager = VaultManager(args.root, policy=policy)
+    manager = VaultManager(args.root, policy=policy, expected_filesystem_uuid=args.expected_filesystem_uuid)
 
     if args.command == "init":
         _json_print(manager.initialize())
