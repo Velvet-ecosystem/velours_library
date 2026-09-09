@@ -18,4 +18,6 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_UNIX
 ReadWritePaths=/srv/velvet/library /srv/velvet/staging/library-drop
+EnvironmentFile=-/etc/velvet/vault.env
+ExecStartPre=/usr/local/bin/velour-vault --root /srv/velvet status
 ExecStart=/usr/local/bin/velour-ingest --root /srv/velvet/library /srv/velvet/staging/library-drop --source owner-drop --trust owner --source-uri-base vault://staging/library-drop

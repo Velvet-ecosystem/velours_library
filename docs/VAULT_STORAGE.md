@@ -114,9 +114,9 @@ velour-vault --root /srv/velvet init
 velour-vault --root /srv/velvet status
 ```
 
-The production `velour-vault` entry point independently checks that `/srv/velvet` is an actual mountpoint and returns a fail-closed `vault-unavailable` result when it is not. Non-production roots remain available for tests and development.
+The production `velour-vault` entry point requires an explicit expected mounted-filesystem UUID and returns `vault-unavailable` for missing, wrong, ambiguous or unverifiable identity. Configure `VELVET_VAULT_FILESYSTEM_UUID` or supply `--expected-filesystem-uuid` before the command. A mountpoint alone is insufficient. Non-production roots remain available for tests and development unless an expected UUID is explicitly configured. Production subdirectories require identity as well; verified subdirectories and bind mounts are supported.
 
-The initializer writes `.velvet-vault.json` into the vault root. Runtime uses that manifest as the presence sentinel for the attached vault.
+The initializer writes `.velvet-vault.json` into the vault root. Runtime may probe that file, but verifies its backing filesystem UUID; the marker is not identity.
 
 Register an existing media object:
 
@@ -210,9 +210,48 @@ This mountpoint guard does not replace checking the actual mount during provisio
 
 rather than the bare `/srv/velvet` directory.
 
-`os.statvfs()` reports the same filesystem capacity for the manifest file. If the external vault is removed, the manifest disappears, so the next Runtime resource probe omits `storage.vault-1tb` rather than accidentally reporting Founder's underlying filesystem as the vault.
+Runtime's attached storage entry must also contain `expected_filesystem_uuid` for the positively identified mounted filesystem. Missing/path-only, wrong, ambiguous or unverifiable identity makes the resource unavailable, even if the directory or marker survives. Do not use the USB name, capacity, generic marker, or encrypted-container UUID in place of the mounted filesystem UUID.
 
 The runtime resource record describes capacity only. It does not expose vault content and carries no authority.
+
+### Matching production write checks
+
+`VaultManager` checks the same UUID/mount/device binding before each production
+operation, including initialization, catalog changes and health observations.
+It holds a verified directory descriptor during the operation, uses that
+reference for filesystem access, checks for path replacement/disappearance,
+and rejects nested paths on another filesystem or through symlinks. Public
+paths, catalog records, manifest and receipt formats remain unchanged. It does
+not create a missing verified root on the host. Each later operation verifies
+again, so recovery requires the correct volume to return.
+
+The matching bounded verifier lives in `velours_library.filesystem_identity`
+and Runtime's `services/filesystem_identity.py`. Both use Linux procfs and
+util-linux `lsblk` with explicit JSON device/UUID columns, a timeout, and no
+privilege escalation. Unreadable metadata fails closed. This binds a logical
+filesystem, not a cryptographic physical USB identity; cloned/ambiguous UUIDs
+are not automatically disambiguated.
+
+Configure the actual UUID locally after positive identification; no UUID is
+generated or supplied by the software pass. For an encrypted vault, use the
+filesystem inside the unlocked volume. Set the same value in Runtime and the
+Library service environment. For example, `/etc/velvet/vault.env` contains the
+operator-assigned `VELVET_VAULT_FILESYSTEM_UUID` value and is managed by the local
+administrator. The automated drop-folder service reads that file and runs
+`velour-vault --root /srv/velvet status` as an additional identity preflight.
+Keep its existing mountpoint condition, unprivileged user and writable-path
+restrictions. The protected underlying mountpoint remains required, especially
+for direct ingestion/archive producers outside `velour-vault`; an advertisement
+is never a filesystem write lock. Arbitrary caller-selected development roots
+and standalone ingestion APIs are not reclassified as production storage.
+
+No catalog/data migration is needed. Missing configuration deliberately disables
+verified vault use; it does not redirect writes. Software tests simulate
+kernel/device observations around real temporary files, including replacement
+mid-operation. They do not establish physical hotplug or complete hardware
+acceptance. Operations are not made into new multi-file transactions by this
+repair; partial work, if interrupted, remains subject to the existing recovery
+semantics on the intended filesystem.
 
 Recommended capabilities for the shared vault resource are:
 
