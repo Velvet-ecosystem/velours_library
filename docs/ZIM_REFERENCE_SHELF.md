@@ -77,9 +77,45 @@ Default endpoint:
 http://127.0.0.1:8080/
 ```
 
-Velvet, the Home unit, or a local browser can then use Kiwix's full-text search for ZIMs that contain a search index.
+Velvet, the Home unit, or a local embedded reader can then use Kiwix's full-text search for ZIMs that contain a search index.
 
 `kiwix-serve` is intentionally treated as its own read-only reference engine instead of unpacking Wikipedia into millions of normal Library candidates.
+
+## Persistent Founder service
+
+Founder should not require Mister to start a terminal command or open Firefox before Velour can use the ZIM shelf. The repository therefore includes a hardened systemd example:
+
+```text
+examples/systemd/velour-zim.service
+```
+
+The service keeps the existing safety posture rather than inventing a second one:
+
+- it starts only when `/srv/velvet` is a mounted filesystem;
+- it runs as the unprivileged `velvet` user;
+- it verifies the reviewed vault boundary before starting;
+- it verifies that Velour sees a ready ZIM shelf;
+- it mounts the Library read-only from the service's point of view;
+- it binds Kiwix to `127.0.0.1:8080` only;
+- it does not pass `--allow-network` or `--allow-external-links`;
+- it restarts Kiwix after a process failure without changing Library authority.
+
+Typical installation on Founder is:
+
+```bash
+sudo install -m 0644 examples/systemd/velour-zim.service /etc/systemd/system/velour-zim.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now velour-zim.service
+```
+
+Verify it without opening a browser:
+
+```bash
+systemctl status velour-zim.service
+velour-zim --root /srv/velvet/library status
+```
+
+The Interface may then embed the loopback Kiwix endpoint inside Velour's Library Reader. Firefox remains useful as a bench/debug fallback, but it is not part of the intended Founder navigation path.
 
 ## LAN exposure is explicit
 
