@@ -46,7 +46,7 @@ class FederatedSearchCliTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(output.getvalue())
-        self.assertEqual(payload["sources"]["library"]["status"], "error")
+        self.assertEqual(payload["sources"]["library"]["status"], "unavailable")
         self.assertIn("Permission denied", payload["sources"]["library"]["message"])
         self.assertEqual(payload["sources"]["web"]["status"], "ok")
         self.assertTrue(any(row["provider"] == "web" for row in payload["results"]))
