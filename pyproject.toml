@@ -39,6 +39,7 @@ velour-provenance = "velours_library.source_provenance:main"
 velour-serve = "velours_library.retrieval_service:main"
 velour-vault = "velours_library.vault_cli:main"
 velour-web = "velours_library.web_research:main"
+velour-search = "velours_library.federated_search:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
