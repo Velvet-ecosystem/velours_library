@@ -53,6 +53,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             kiwix_provider=kiwix,
             web_provider=web,
         ).search(args.query, args.limit)
+        if isinstance(library, _UnavailableLibrary):
+            payload["sources"]["library"]["status"] = "unavailable"
         print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
         return 0
     except (ValueError, FederatedSearchError, WebResearchError, OSError) as exc:
